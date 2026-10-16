@@ -20,12 +20,16 @@ type RouterConfig struct {
 	AuthUseCases     *commands.AuthUseCases
 	UserQueries      *queries.UserQueries
 	LiveCaseUseCases *commands.LiveCaseUseCases
-	LiveCaseQueries  *queries.LiveCaseQueries
-	ArticleUseCases  *commands.ArticleUseCases
-	ArticleQueries   *queries.ArticleQueries
-	LiveEngine       ports.LiveEnginePort
-	EnableSSE        bool
-	RateLimiter      *IPRateLimiter
+	LiveCaseQueries       *queries.LiveCaseQueries
+	ArticleUseCases       *commands.ArticleUseCases
+	ArticleQueries        *queries.ArticleQueries
+	SubscriptionUseCases  *commands.SubscriptionUseCases
+	SubscriptionQueries   *queries.SubscriptionQueries
+	FollowUseCases        *commands.FollowUseCases
+	FollowQueries         *queries.FollowQueries
+	LiveEngine            ports.LiveEnginePort
+	EnableSSE             bool
+	RateLimiter           *IPRateLimiter
 }
 
 // NewRouter builds the HTTP handler with all routes, rate limiters, and middlewares.
@@ -115,6 +119,35 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		// Judgments and Upload URLs
 		mux.HandleFunc("POST /v1/cms/judgments", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.CreateJudgment))
 		mux.HandleFunc("POST /v1/cms/uploads/presigned-url", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.RequestUploadURL))
+	}
+
+	// 7. Subscriptions & Payment Webhooks
+	if cfg.SubscriptionUseCases != nil {
+		webhookHandler := NewPaymentWebhookHandler(cfg.SubscriptionUseCases)
+		mux.HandleFunc("POST /v1/webhooks/payments", webhookHandler.HandleWebhook)
+	}
+
+	if cfg.SubscriptionQueries != nil {
+		readerSubHandler := NewReaderSubscriptionHandler(cfg.SubscriptionQueries)
+		mux.HandleFunc("GET /v1/me/subscription", RequireAuth(readerSubHandler.GetMySubscription))
+	}
+
+	if cfg.SubscriptionUseCases != nil && cfg.SubscriptionQueries != nil {
+		cmsSubHandler := NewCMSSubscriptionHandler(cfg.SubscriptionUseCases, cfg.SubscriptionQueries)
+		mux.HandleFunc("GET /v1/cms/subscriptions", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsSubHandler.ListSubscriptions))
+		mux.HandleFunc("POST /v1/cms/subscriptions/grant", RequireRoles(identity.RoleAdmin)(cmsSubHandler.GrantSubscription))
+		mux.HandleFunc("POST /v1/cms/subscriptions/{id}/cancel", RequireRoles(identity.RoleAdmin)(cmsSubHandler.CancelSubscription))
+	}
+
+	// 8. Case Follows & Devices
+	if cfg.FollowUseCases != nil && cfg.FollowQueries != nil {
+		followHandler := NewFollowHandler(cfg.FollowUseCases, cfg.FollowQueries)
+		mux.HandleFunc("POST /v1/cases/{id}/follow", RequireAuth(followHandler.FollowCase))
+		mux.HandleFunc("DELETE /v1/cases/{id}/follow", RequireAuth(followHandler.UnfollowCase))
+		mux.HandleFunc("GET /v1/cases/{id}/follow", followHandler.GetCaseFollowStatus)
+
+		mux.HandleFunc("POST /v1/devices", RequireAuth(followHandler.RegisterDevice))
+		mux.HandleFunc("DELETE /v1/devices", RequireAuth(followHandler.UnregisterDevice))
 	}
 
 	// Global middleware chain (outer to inner execution)

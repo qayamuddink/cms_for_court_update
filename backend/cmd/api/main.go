@@ -21,7 +21,9 @@ import (
 	"github.com/livelaw/backend/internal/adapters/outbound/hasher"
 	"github.com/livelaw/backend/internal/adapters/outbound/idgen"
 	"github.com/livelaw/backend/internal/adapters/outbound/liveengine"
+	"github.com/livelaw/backend/internal/adapters/outbound/payment"
 	"github.com/livelaw/backend/internal/adapters/outbound/postgres"
+	"github.com/livelaw/backend/internal/adapters/outbound/push"
 	"github.com/livelaw/backend/internal/adapters/outbound/token"
 	"github.com/livelaw/backend/internal/application/commands"
 	"github.com/livelaw/backend/internal/application/ports"
@@ -170,7 +172,14 @@ func main() {
 	assignmentRepo := postgres.NewSQLCaseAssignmentRepository(db)
 	outboxRepo := postgres.NewSQLOutboxRepository(db)
 	txMgr := postgres.NewSQLTransactionManager(db)
+	subRepo := postgres.NewSQLSubscriptionRepository(db)
+	caseFollowRepo := postgres.NewSQLCaseFollowRepository(db)
+	deviceTokenRepo := postgres.NewSQLDeviceTokenRepository(db)
+	paymentGateway := payment.NewStubPaymentGateway(getEnv("PAYMENT_WEBHOOK_SECRET", "test_webhook_secret"))
+	pushSender := push.NewStubPushSender(logger)
+	pushDispatcher := commands.NewPushDispatcher(caseFollowRepo, deviceTokenRepo, caseRepo, pushSender, logger)
 	eventPublisher := liveengine.NewLogEventPublisher(logger)
+	compositePublisher := commands.NewCompositeEventPublisher(eventPublisher, pushDispatcher)
 	articleRepo := postgres.NewSQLArticleRepository(db)
 	entitlementChecker := entitlement.NewSQLSubscriptionChecker(db, userRepo)
 
@@ -187,33 +196,41 @@ func main() {
 	// Start Outbox polling worker in background
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	outboxWorker := postgres.NewOutboxWorker(outboxRepo, eventPublisher, 200*time.Millisecond, clock, logger)
+	outboxWorker := postgres.NewOutboxWorker(outboxRepo, compositePublisher, 200*time.Millisecond, clock, logger)
 	go outboxWorker.Start(workerCtx)
 
 	// Wire application use cases (domain and use cases NEVER change between modes!)
-	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock)
+	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock, subRepo)
 	userQueries := queries.NewUserQueries(userRepo)
 	liveCaseUseCases := commands.NewLiveCaseUseCases(caseRepo, updateRepo, assignmentRepo, outboxRepo, txMgr, liveEnginePort, userRepo, idGenerator, clock)
 	liveCaseQueries := queries.NewLiveCaseQueries(caseRepo, updateRepo, assignmentRepo)
 	articleUseCases := commands.NewArticleUseCases(articleRepo, idGenerator, clock, fileStore)
 	articleQueries := queries.NewArticleQueries(articleRepo, entitlementChecker, fileStore)
+	subUseCases := commands.NewSubscriptionUseCases(subRepo, userRepo, paymentGateway, idGenerator, clock)
+	subQueries := queries.NewSubscriptionQueries(subRepo)
+	followUseCases := commands.NewFollowUseCases(caseFollowRepo, deviceTokenRepo, caseRepo, idGenerator, clock)
+	followQueries := queries.NewFollowQueries(caseFollowRepo)
 	rateLimiter := httpAdapter.NewIPRateLimiter(20, 1*time.Minute)
 
 	// Build inbound HTTP router
 	router := httpAdapter.NewRouter(httpAdapter.RouterConfig{
-		Logger:           logger,
-		DBHealthChecker:  dbHealthChecker,
-		Clock:            clock,
-		TokenService:     tokenService,
-		AuthUseCases:     authUseCases,
-		UserQueries:      userQueries,
-		LiveCaseUseCases: liveCaseUseCases,
-		LiveCaseQueries:  liveCaseQueries,
-		ArticleUseCases:  articleUseCases,
-		ArticleQueries:   articleQueries,
-		LiveEngine:       liveEnginePort,
-		EnableSSE:        enableSSE,
-		RateLimiter:      rateLimiter,
+		Logger:               logger,
+		DBHealthChecker:      dbHealthChecker,
+		Clock:                clock,
+		TokenService:         tokenService,
+		AuthUseCases:         authUseCases,
+		UserQueries:          userQueries,
+		LiveCaseUseCases:     liveCaseUseCases,
+		LiveCaseQueries:      liveCaseQueries,
+		ArticleUseCases:      articleUseCases,
+		ArticleQueries:       articleQueries,
+		SubscriptionUseCases: subUseCases,
+		SubscriptionQueries:  subQueries,
+		FollowUseCases:       followUseCases,
+		FollowQueries:        followQueries,
+		LiveEngine:           liveEnginePort,
+		EnableSSE:            enableSSE,
+		RateLimiter:          rateLimiter,
 	})
 
 	server := &http.Server{

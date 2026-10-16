@@ -2,9 +2,14 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/livelaw/backend/internal/domain/livecase"
+)
+
+var (
+	ErrCaseNotFound = errors.New("court case not found")
 )
 
 // Tx defines the transaction boundary abstraction for atomic operations.

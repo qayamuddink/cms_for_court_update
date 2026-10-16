@@ -37,6 +37,7 @@ type AuthUseCases struct {
 	tokenService ports.TokenService
 	idGen        ports.IDGenerator
 	clock        ports.Clock
+	subRepo      ports.SubscriptionRepository
 }
 
 // NewAuthUseCases creates a new AuthUseCases instance.
@@ -47,7 +48,12 @@ func NewAuthUseCases(
 	tokenService ports.TokenService,
 	idGen ports.IDGenerator,
 	clock ports.Clock,
+	subRepo ...ports.SubscriptionRepository,
 ) *AuthUseCases {
+	var sr ports.SubscriptionRepository
+	if len(subRepo) > 0 {
+		sr = subRepo[0]
+	}
 	return &AuthUseCases{
 		userRepo:     userRepo,
 		tokenRepo:    tokenRepo,
@@ -55,6 +61,7 @@ func NewAuthUseCases(
 		tokenService: tokenService,
 		idGen:        idGen,
 		clock:        clock,
+		subRepo:      sr,
 	}
 }
 
@@ -345,10 +352,29 @@ func (uc *AuthUseCases) AdminUpdateUser(ctx context.Context, cmd AdminUpdateUser
 }
 
 func (uc *AuthUseCases) generateTokenPair(ctx context.Context, user *identity.User) (*AuthResult, error) {
-	// Entitlement claim placeholder for Phase 2
+	now := uc.clock.Now()
 	entitlement := ports.EntitlementClaim{
 		Tier:      "free",
 		ExpiresAt: 0,
+	}
+
+	// Staff members get long-lived staff entitlement
+	if user.SystemRole == identity.RoleAdmin ||
+		user.SystemRole == identity.RoleEditor ||
+		user.SystemRole == identity.RoleReporter {
+		entitlement = ports.EntitlementClaim{
+			Tier:      "staff",
+			ExpiresAt: now.Add(365 * 24 * time.Hour).Unix(),
+		}
+	} else if uc.subRepo != nil {
+		// Readers: check active subscription
+		sub, err := uc.subRepo.GetActiveByUserID(ctx, user.ID)
+		if err == nil && sub != nil && sub.IsEntitled(now) {
+			entitlement = ports.EntitlementClaim{
+				Tier:      string(sub.Tier),
+				ExpiresAt: sub.CurrentPeriodEnd.Unix(),
+			}
+		}
 	}
 
 	accessToken, accessExpiresAt, err := uc.tokenService.GenerateAccessToken(user, entitlement)
@@ -361,7 +387,6 @@ func (uc *AuthUseCases) generateTokenPair(ctx context.Context, user *identity.Us
 		return nil, err
 	}
 
-	now := uc.clock.Now()
 	tokenRecord := &ports.RefreshToken{
 		ID:        uc.idGen.NewID(),
 		UserID:    user.ID,

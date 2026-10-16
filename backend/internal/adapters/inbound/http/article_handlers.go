@@ -88,6 +88,10 @@ func (h *ArticlePublicHandler) GetBySlug(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if article.AccessLevel == content.AccessLevelPremium {
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
+
 	writeJSON(w, http.StatusOK, article)
 }
 

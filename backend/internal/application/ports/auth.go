@@ -2,9 +2,15 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/livelaw/backend/internal/domain/identity"
+)
+
+var (
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
 )
 
 // PasswordHasher provides secure password hashing and verification.
@@ -25,6 +31,21 @@ type AuthClaims struct {
 	Email       string           `json:"email"`
 	SystemRole  string           `json:"system_role"`
 	Entitlement EntitlementClaim `json:"entitlement"`
+}
+
+type authClaimsCtxKey struct{}
+
+// ContextWithAuthClaims returns a copy of parent context carrying the AuthClaims.
+func ContextWithAuthClaims(ctx context.Context, claims *AuthClaims) context.Context {
+	return context.WithValue(ctx, authClaimsCtxKey{}, claims)
+}
+
+// AuthClaimsFromContext extracts AuthClaims from context if present.
+func AuthClaimsFromContext(ctx context.Context) *AuthClaims {
+	if val, ok := ctx.Value(authClaimsCtxKey{}).(*AuthClaims); ok {
+		return val
+	}
+	return nil
 }
 
 // TokenService issues and verifies access and refresh tokens.

@@ -13,6 +13,9 @@ const AuthClaimsKey contextKey = "auth_claims"
 
 // GetAuthClaims retrieves the verified auth claims from context.
 func GetAuthClaims(ctx context.Context) *ports.AuthClaims {
+	if claims := ports.AuthClaimsFromContext(ctx); claims != nil {
+		return claims
+	}
 	if val, ok := ctx.Value(AuthClaimsKey).(*ports.AuthClaims); ok {
 		return val
 	}
@@ -43,7 +46,8 @@ func AuthenticateMiddleware(tokenService ports.TokenService) func(http.Handler) 
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), AuthClaimsKey, claims)
+			ctx := ports.ContextWithAuthClaims(r.Context(), claims)
+			ctx = context.WithValue(ctx, AuthClaimsKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -10,6 +10,7 @@ import (
 )
 
 // SQLSubscriptionChecker implements ports.EntitlementChecker checking subscriptions and staff roles.
+// It prioritizes zero-DB fast-path checks using JWT AuthClaims before falling back to DB queries.
 type SQLSubscriptionChecker struct {
 	db       *sql.DB
 	userRepo ports.UserRepository
@@ -35,17 +36,39 @@ func (c *SQLSubscriptionChecker) HasArticleAccess(ctx context.Context, userID *s
 		return false, nil
 	}
 
-	// Staff members (admin, editor, reporter) always have full access
+	// 1. FAST PATH: Zero-DB check via verified JWT AuthClaims in context
+	if claims := ports.AuthClaimsFromContext(ctx); claims != nil && claims.UserID == *userID {
+		// Staff always have access
+		if claims.SystemRole == "admin" ||
+			claims.SystemRole == "editor" ||
+			claims.SystemRole == "editor_in_chief" ||
+			claims.SystemRole == "senior_editor" ||
+			claims.SystemRole == "reporter" ||
+			claims.Entitlement.Tier == "staff" {
+			return true, nil
+		}
+
+		// Valid active subscription claim inside JWT
+		if claims.Entitlement.Tier != "free" && claims.Entitlement.Tier != "" && claims.Entitlement.ExpiresAt > time.Now().Unix() {
+			return true, nil
+		}
+	}
+
+	// 2. Fallback check: user account role from database
 	if c.userRepo != nil {
 		u, err := c.userRepo.GetByID(ctx, *userID)
 		if err == nil && u != nil {
-			if u.SystemRole == "admin" || u.SystemRole == "editor" || u.SystemRole == "reporter" {
+			if u.SystemRole == "admin" ||
+				u.SystemRole == "editor" ||
+				u.SystemRole == "editor_in_chief" ||
+				u.SystemRole == "senior_editor" ||
+				u.SystemRole == "reporter" {
 				return true, nil
 			}
 		}
 	}
 
-	// Check active subscription in database
+	// 3. Fallback check: active subscription in PostgreSQL
 	if c.db != nil {
 		query := `
 			SELECT EXISTS (

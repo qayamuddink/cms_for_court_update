@@ -1532,6 +1532,399 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/webhooks/payments:
+    post:
+      summary: Handle payment provider webhooks
+      description: Receives asynchronous webhook events from payment gateway (Razorpay/Stripe) to activate, renew, or cancel subscriptions.
+      operationId: handlePaymentWebhook
+      tags:
+        - Billing
+      parameters:
+        - name: X-Signature
+          in: header
+          description: HMAC-SHA256 webhook signature
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentWebhookPayload'
+      responses:
+        '200':
+          description: Webhook processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '400':
+          description: Invalid webhook payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/me/subscription:
+    get:
+      summary: Get active subscription for authenticated user
+      description: Returns subscription entitlement details for the currently logged-in user.
+      operationId: getMySubscription
+      tags:
+        - Billing
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Active subscription details or free status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscription:
+                    allOf:
+                      - $ref: '#/components/schemas/Subscription'
+                    nullable: true
+                  tier:
+                    type: string
+                    example: pro
+                  is_entitled:
+                    type: boolean
+                    example: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/subscriptions:
+    get:
+      summary: List subscriptions (CMS)
+      description: Returns paginated user subscriptions for editorial and billing management.
+      operationId: listCMSSubscriptions
+      tags:
+        - CMS Billing
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Max items to return
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          description: Number of items to skip
+          schema:
+            type: integer
+            default: 0
+        - name: status
+          in: query
+          description: Filter by subscription status
+          schema:
+            type: string
+            enum: [trialing, active, past_due, cancelled, expired]
+      responses:
+        '200':
+          description: Paginated subscriptions list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/subscriptions/grant:
+    post:
+      summary: Manually grant a subscription (Admin only)
+      description: Provisions an active subscription tier directly to a user account.
+      operationId: grantSubscription
+      tags:
+        - CMS Billing
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantSubscriptionRequest'
+      responses:
+        '201':
+          description: Subscription granted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin privileges required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/subscriptions/{id}/cancel:
+    post:
+      summary: Cancel a subscription (Admin only)
+      description: Cancels an active subscription immediately.
+      operationId: cancelSubscription
+      tags:
+        - CMS Billing
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Subscription ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Subscription marked cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: cancelled
+                  id:
+                    type: string
+        '403':
+          description: Admin privileges required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Subscription not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cases/{id}/follow:
+    get:
+      summary: Get case follow status
+      description: Returns whether the user is following the case and the total follower count.
+      operationId: getCaseFollowStatus
+      tags:
+        - Case Follows
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Follow status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseFollowStatusResponse'
+    post:
+      summary: Follow court case for push notifications
+      description: Subscribes the user to real-time alerts for verdicts and orders on a case.
+      operationId: followCase
+      tags:
+        - Case Follows
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowCaseRequest'
+      responses:
+        '200':
+          description: Case followed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: following
+                  case_id:
+                    type: string
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Unfollow court case
+      description: Removes user subscription from case alerts.
+      operationId: unfollowCase
+      tags:
+        - Case Follows
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Case unfollowed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unfollowed
+                  case_id:
+                    type: string
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/devices:
+    post:
+      summary: Register mobile/web push device token
+      description: Registers or refreshes a device token for push notification delivery.
+      operationId: registerDeviceToken
+      tags:
+        - Push Devices
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceRequest'
+      responses:
+        '201':
+          description: Device token registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: registered
+                  platform:
+                    type: string
+        '400':
+          description: Invalid platform or push token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Unregister device push token
+      description: Removes a push token registration.
+      operationId: unregisterDeviceToken
+      tags:
+        - Push Devices
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: push_token
+          in: query
+          required: false
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                push_token:
+                  type: string
+      responses:
+        '200':
+          description: Device token unregistered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unregistered
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -2473,4 +2866,167 @@ components:
           type: string
         expires_in_seconds:
           type: integer
+
+    Subscription:
+      type: object
+      required:
+        - id
+        - user_id
+        - tier
+        - status
+        - started_at
+        - current_period_end
+        - auto_renew
+        - payment_provider
+        - provider_subscription_id
+        - price_amount_minor
+        - currency
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        tier:
+          type: string
+          enum: [free, pro, individual_monthly, individual_yearly, institutional]
+        status:
+          type: string
+          enum: [trialing, active, past_due, cancelled, expired]
+        started_at:
+          type: string
+          format: date-time
+        current_period_end:
+          type: string
+          format: date-time
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        auto_renew:
+          type: boolean
+        payment_provider:
+          type: string
+        provider_subscription_id:
+          type: string
+        price_amount_minor:
+          type: integer
+        currency:
+          type: string
+          example: INR
+        seat_group_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SubscriptionListResponse:
+      type: object
+      required:
+        - subscriptions
+        - total
+      properties:
+        subscriptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subscription'
+        total:
+          type: integer
+
+    GrantSubscriptionRequest:
+      type: object
+      required:
+        - user_id
+        - tier
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        tier:
+          type: string
+          enum: [pro, individual_monthly, individual_yearly, institutional]
+        duration_days:
+          type: integer
+          default: 30
+
+    PaymentWebhookPayload:
+      type: object
+      required:
+        - event_id
+        - event_type
+        - provider_subscription_id
+        - user_id
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+          enum: [subscription.created, subscription.renewed, subscription.cancelled, payment.succeeded, subscription.activated]
+        provider_subscription_id:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        tier:
+          type: string
+          default: pro
+        status:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        current_period_end:
+          type: string
+          format: date-time
+        price_amount_minor:
+          type: integer
+        currency:
+          type: string
+          default: INR
+
+    CaseFollowStatusResponse:
+      type: object
+      required:
+        - is_following
+        - notify_on
+        - follower_count
+      properties:
+        is_following:
+          type: boolean
+        notify_on:
+          type: array
+          items:
+            type: string
+        follower_count:
+          type: integer
+
+    FollowCaseRequest:
+      type: object
+      properties:
+        notify_on:
+          type: array
+          items:
+            type: string
+          default: [verdict, order]
+
+    RegisterDeviceRequest:
+      type: object
+      required:
+        - platform
+        - push_token
+      properties:
+        platform:
+          type: string
+          enum: [ios, android, web]
+        push_token:
+          type: string
+
 
