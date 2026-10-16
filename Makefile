@@ -21,6 +21,10 @@ lint-openapi:
 	@echo "Validating OpenAPI specification..."
 	cd backend && go run ./cmd/openapi-lint -spec $(OPENAPI_SPEC)
 
+check-api-client:
+	@echo "Checking CMS TypeScript API client matches OpenAPI spec..."
+	cd cms && npm run check:api
+
 lint:
 	@echo "Running golangci-lint..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
@@ -56,8 +60,8 @@ docker-down:
 docker-logs:
 	docker compose logs -f
 
-check: lint-openapi test
-	@echo "All Phase 1 quality checks passed."
+check: lint-openapi check-api-client test
+	@echo "All platform quality checks passed."
 
 help:
 	@echo "LiveLaw Platform Makefile Targets:"

@@ -1,4 +1,6 @@
 import React from 'react';
+import './globals.css';
+import { AuthProvider } from '@/lib/auth/context';
 
 export const metadata = {
   title: 'LiveLaw CMS - Editorial & Court Desk',
@@ -12,8 +14,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-        {children}
+      <body className="bg-slate-50 text-slate-900 font-sans antialiased">
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
