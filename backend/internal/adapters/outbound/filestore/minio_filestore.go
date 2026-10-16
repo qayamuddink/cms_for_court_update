@@ -14,13 +14,15 @@ import (
 
 // MinIOFileStore implements ports.FileStore using MinIO / S3 SDK.
 type MinIOFileStore struct {
-	client     *minio.Client
-	bucketName string
+	client        *minio.Client
+	presignClient *minio.Client
+	bucketName    string
 }
 
 // Config holds configuration parameters for S3/MinIO client.
 type Config struct {
 	Endpoint        string
+	PublicEndpoint  string
 	AccessKeyID     string
 	SecretAccessKey string
 	BucketName      string
@@ -51,14 +53,38 @@ func NewMinIOFileStore(cfg Config) (*MinIOFileStore, error) {
 		return nil, fmt.Errorf("failed to create minio client: %w", err)
 	}
 
+	presignClient := client
+	if cfg.PublicEndpoint != "" {
+		pubEndpoint := cfg.PublicEndpoint
+		pubSSL := false
+		if strings.HasPrefix(pubEndpoint, "http://") {
+			pubEndpoint = strings.TrimPrefix(pubEndpoint, "http://")
+			pubSSL = false
+		} else if strings.HasPrefix(pubEndpoint, "https://") {
+			pubEndpoint = strings.TrimPrefix(pubEndpoint, "https://")
+			pubSSL = true
+		}
+		pubEndpoint = strings.TrimRight(pubEndpoint, "/")
+
+		pClient, pErr := minio.New(pubEndpoint, &minio.Options{
+			Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+			Secure: pubSSL,
+			Region: "us-east-1",
+		})
+		if pErr == nil {
+			presignClient = pClient
+		}
+	}
+
 	bucket := cfg.BucketName
 	if bucket == "" {
 		bucket = "livelaw-files"
 	}
 
 	return &MinIOFileStore{
-		client:     client,
-		bucketName: bucket,
+		client:        client,
+		presignClient: presignClient,
+		bucketName:    bucket,
 	}, nil
 }
 
@@ -83,7 +109,7 @@ func (s *MinIOFileStore) PresignedPutURL(ctx context.Context, key, contentType s
 		expiry = 15 * time.Minute
 	}
 
-	u, err := s.client.PresignedPutObject(ctx, s.bucketName, key, expiry)
+	u, err := s.presignClient.PresignedPutObject(ctx, s.bucketName, key, expiry)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate presigned PUT url: %w", err)
 	}
@@ -97,7 +123,7 @@ func (s *MinIOFileStore) PresignedGetURL(ctx context.Context, key string, expiry
 	}
 
 	reqParams := make(url.Values)
-	u, err := s.client.PresignedGetObject(ctx, s.bucketName, key, expiry, reqParams)
+	u, err := s.presignClient.PresignedGetObject(ctx, s.bucketName, key, expiry, reqParams)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate presigned GET url: %w", err)
 	}

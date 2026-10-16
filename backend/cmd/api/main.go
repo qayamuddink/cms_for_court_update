@@ -52,6 +52,7 @@ func main() {
 
 	// S3 / MinIO configuration
 	s3Endpoint := getEnv("S3_ENDPOINT", "http://localhost:9000")
+	s3PublicEndpoint := getEnv("S3_PUBLIC_ENDPOINT", s3Endpoint)
 	s3AccessKey := getEnv("S3_ACCESS_KEY", "minioadmin")
 	s3SecretKey := getEnv("S3_SECRET_KEY", "minioadmin")
 	s3Bucket := getEnv("S3_BUCKET", "livelaw-files")
@@ -64,6 +65,7 @@ func main() {
 		slog.Bool("run_migrations", runMigrations),
 		slog.Bool("seed_data", seedData),
 		slog.String("s3_endpoint", s3Endpoint),
+		slog.String("s3_public_endpoint", s3PublicEndpoint),
 		slog.String("s3_bucket", s3Bucket),
 	)
 
@@ -114,6 +116,7 @@ func main() {
 	// MinIO object storage adapter
 	fileStore, err := filestore.NewMinIOFileStore(filestore.Config{
 		Endpoint:        s3Endpoint,
+		PublicEndpoint:  s3PublicEndpoint,
 		AccessKeyID:     s3AccessKey,
 		SecretAccessKey: s3SecretKey,
 		BucketName:      s3Bucket,
