@@ -15,6 +15,7 @@ import (
 	httpAdapter "github.com/livelaw/backend/internal/adapters/inbound/http"
 	"github.com/livelaw/backend/internal/adapters/outbound/hasher"
 	"github.com/livelaw/backend/internal/adapters/outbound/idgen"
+	"github.com/livelaw/backend/internal/adapters/outbound/liveengine"
 	"github.com/livelaw/backend/internal/adapters/outbound/postgres"
 	"github.com/livelaw/backend/internal/adapters/outbound/token"
 	"github.com/livelaw/backend/internal/application/commands"
@@ -86,6 +87,15 @@ func main() {
 	pwHasher := hasher.NewBcryptHasher(12)
 	tokenService := token.NewJWTService(jwtSecret, "livelaw-platform", 15*time.Minute, 7*24*time.Hour, clock)
 
+	// Phase 3 adapters: cases, updates, outbox & live engine
+	caseRepo := postgres.NewSQLCourtCaseRepository(db)
+	updateRepo := postgres.NewSQLLiveUpdateRepository(db)
+	assignmentRepo := postgres.NewSQLCaseAssignmentRepository(db)
+	outboxRepo := postgres.NewSQLOutboxRepository(db)
+	txMgr := postgres.NewSQLTransactionManager(db)
+	liveEngine := liveengine.NewInProcessLiveEngine(updateRepo, logger)
+	eventPublisher := liveengine.NewLogEventPublisher(logger)
+
 	// Seed initial users if enabled
 	if seedData {
 		seeder := postgres.NewSeeder(userRepo, pwHasher, idGenerator, clock, logger)
@@ -96,20 +106,30 @@ func main() {
 		seedCancel()
 	}
 
+	// Start Outbox polling worker in background
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	outboxWorker := postgres.NewOutboxWorker(outboxRepo, eventPublisher, 200*time.Millisecond, clock, logger)
+	go outboxWorker.Start(workerCtx)
+
 	// Wire application use cases
 	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock)
 	userQueries := queries.NewUserQueries(userRepo)
+	liveCaseUseCases := commands.NewLiveCaseUseCases(caseRepo, updateRepo, assignmentRepo, outboxRepo, txMgr, liveEngine, userRepo, idGenerator, clock)
+	liveCaseQueries := queries.NewLiveCaseQueries(caseRepo, updateRepo, assignmentRepo)
 	rateLimiter := httpAdapter.NewIPRateLimiter(20, 1*time.Minute)
 
 	// Build inbound HTTP router
 	router := httpAdapter.NewRouter(httpAdapter.RouterConfig{
-		Logger:          logger,
-		DBHealthChecker: dbHealthChecker,
-		Clock:           clock,
-		TokenService:    tokenService,
-		AuthUseCases:    authUseCases,
-		UserQueries:     userQueries,
-		RateLimiter:     rateLimiter,
+		Logger:           logger,
+		DBHealthChecker:  dbHealthChecker,
+		Clock:            clock,
+		TokenService:     tokenService,
+		AuthUseCases:     authUseCases,
+		UserQueries:      userQueries,
+		LiveCaseUseCases: liveCaseUseCases,
+		LiveCaseQueries:  liveCaseQueries,
+		RateLimiter:      rateLimiter,
 	})
 
 	server := &http.Server{
@@ -134,6 +154,7 @@ func main() {
 
 	<-stop
 	logger.Info("shutting down HTTP server gracefully...")
+	workerCancel() // Terminate outbox worker background loop
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

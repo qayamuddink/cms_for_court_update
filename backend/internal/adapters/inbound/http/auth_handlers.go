@@ -146,7 +146,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, commands.ErrUserDeleted):
 			writeJSONError(w, http.StatusForbidden, "USER_DELETED", "User account has been deleted", reqID)
 		default:
-			writeJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Login failed", reqID)
+			writeJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), reqID)
 		}
 		return
 	}

@@ -334,6 +334,640 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/cases/live:
+    get:
+      summary: List live court cases
+      description: Returns all court cases currently in active live reporting mode.
+      operationId: listLiveCases
+      tags:
+        - Live Cases
+      responses:
+        '200':
+          description: List of active live court cases
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveCasesResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cases/{id}:
+    get:
+      summary: Get court case details
+      description: Retrieves complete metadata and hearing status for a specific court case.
+      operationId: getCase
+      tags:
+        - Live Cases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Court case details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourtCase'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cases/{id}/updates:
+    get:
+      summary: Get case updates after sequence
+      description: Replays or synchronizes live updates for a court case with sequence number strictly greater than after_sequence.
+      operationId: getCaseUpdates
+      tags:
+        - Live Cases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+        - name: after_sequence
+          in: query
+          description: Replay updates with sequence_no greater than this value
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          description: Maximum number of updates to return (max 100)
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Ordered list of updates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUpdatesResponse'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cases/{id}/updates/latest:
+    get:
+      summary: Get latest case updates
+      description: Returns the most recent N updates for a court case in ascending chronological order.
+      operationId: getLatestCaseUpdates
+      tags:
+        - Live Cases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of updates to return (max 100)
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Ordered list of most recent updates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUpdatesResponse'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases:
+    post:
+      summary: Create court case (Editor/Admin only)
+      description: Registers a new court case for legal coverage and live reporting.
+      operationId: createCase
+      tags:
+        - CMS Cases
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCaseRequest'
+      responses:
+        '201':
+          description: Court case created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourtCase'
+        '400':
+          description: Invalid request or missing parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Editor or Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}:
+    patch:
+      summary: Update court case (Editor/Admin only)
+      description: Modifies metadata, hearing date, or stage status of a court case.
+      operationId: updateCase
+      tags:
+        - CMS Cases
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCaseRequest'
+      responses:
+        '200':
+          description: Court case updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourtCase'
+        '400':
+          description: Invalid request or invalid status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Editor or Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}/live:
+    post:
+      summary: Toggle live coverage state (Editor/Admin only)
+      description: Enables or disables the live ticker for a court case.
+      operationId: setCaseLive
+      tags:
+        - CMS Cases
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetLiveRequest'
+      responses:
+        '200':
+          description: Live status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourtCase'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Editor or Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}/assign:
+    post:
+      summary: Assign reporter to case (Editor/Admin only)
+      description: Authorizes a reporter to submit live updates from the courtroom.
+      operationId: assignReporter
+      tags:
+        - CMS Cases
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignReporterRequest'
+      responses:
+        '200':
+          description: Reporter assigned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: assigned
+        '400':
+          description: Invalid user ID or user is not a reporter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Editor or Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case or user not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}/assign/{userId}:
+    delete:
+      summary: Unassign reporter from case (Editor/Admin only)
+      description: Revokes reporter assignment to a court case.
+      operationId: unassignReporter
+      tags:
+        - CMS Cases
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+        - name: userId
+          in: path
+          required: true
+          description: Reporter user UUID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reporter unassigned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unassigned
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Editor or Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}/reporters:
+    get:
+      summary: List assigned reporters (Editor/Admin only)
+      description: Returns all reporter user IDs authorized to post live updates to this case.
+      operationId: listAssignedReporters
+      tags:
+        - CMS Cases
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of assigned reporter user IDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportersResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Editor or Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}/updates:
+    post:
+      summary: Publish live update (Assigned Reporter, Editor, Admin)
+      description: Appends a new live update to the court case ticker. Guarantees append-only storage and strictly consecutive sequence numbers.
+      operationId: publishLiveUpdate
+      tags:
+        - CMS Live Updates
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Unique idempotency key to prevent duplicate updates
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishUpdatePayload'
+      responses:
+        '201':
+          description: Live update appended successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUpdate'
+        '400':
+          description: Case closed or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Reporter must be assigned to case)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict (Verdict update already posted)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}/updates/{updateId}/correct:
+    post:
+      summary: Correct live update (Assigned Reporter, Editor, Admin)
+      description: Appends a new correction update referencing an earlier update. Updates are never edited in place.
+      operationId: correctLiveUpdate
+      tags:
+        - CMS Live Updates
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+        - name: updateId
+          in: path
+          required: true
+          description: Target live update UUID to correct
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Unique idempotency key
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CorrectUpdatePayload'
+      responses:
+        '201':
+          description: Correction update appended successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUpdate'
+        '400':
+          description: Case closed, update retracted, or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case or update not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/cases/{id}/updates/{updateId}/retract:
+    post:
+      summary: Retract live update (Assigned Reporter, Editor, Admin)
+      description: Appends a retraction update referencing the retracted update. Updates are never deleted or modified in place.
+      operationId: retractLiveUpdate
+      tags:
+        - CMS Live Updates
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+        - name: updateId
+          in: path
+          required: true
+          description: Target live update UUID to retract
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Unique idempotency key
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetractUpdatePayload'
+      responses:
+        '201':
+          description: Retraction update appended successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUpdate'
+        '400':
+          description: Update already retracted or case closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Court case or update not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -572,3 +1206,282 @@ components:
           type: string
           format: date-time
           example: '2026-10-16T03:08:00Z'
+
+    CourtCase:
+      type: object
+      required:
+        - id
+        - court_name
+        - case_number
+        - case_type
+        - title
+        - bench_judges
+        - presiding_judge
+        - petitioner_parties
+        - respondent_parties
+        - status
+        - last_sequence_no
+        - is_live
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        court_name:
+          type: string
+        case_number:
+          type: string
+        case_type:
+          type: string
+        title:
+          type: string
+        bench_judges:
+          type: array
+          items:
+            type: string
+        presiding_judge:
+          type: string
+        petitioner_parties:
+          type: array
+          items:
+            type: string
+        respondent_parties:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [listed, hearing, reserved, decided, disposed]
+        next_hearing_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_sequence_no:
+          type: integer
+        is_live:
+          type: boolean
+        judgment_article_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    LiveUpdate:
+      type: object
+      required:
+        - id
+        - court_case_id
+        - sequence_no
+        - update_type
+        - content
+        - reporter_id
+        - status
+        - event_time
+        - created_at
+      properties:
+        id:
+          type: string
+        court_case_id:
+          type: string
+        sequence_no:
+          type: integer
+        update_type:
+          type: string
+          enum: [argument, judicial_remark, order, break, adjournment, verdict]
+        speaker_label:
+          type: string
+          nullable: true
+        content:
+          type: string
+        reporter_id:
+          type: string
+        status:
+          type: string
+          enum: [published, corrected, retracted]
+        corrects_update_id:
+          type: string
+          nullable: true
+        event_time:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        idempotency_key:
+          type: string
+          nullable: true
+
+    LiveCasesResponse:
+      type: object
+      required:
+        - cases
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/CourtCase'
+
+    LiveUpdatesResponse:
+      type: object
+      required:
+        - updates
+      properties:
+        updates:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiveUpdate'
+
+    ReportersResponse:
+      type: object
+      required:
+        - reporter_ids
+      properties:
+        reporter_ids:
+          type: array
+          items:
+            type: string
+
+    CreateCaseRequest:
+      type: object
+      required:
+        - court_name
+        - case_number
+        - case_type
+        - title
+        - bench_judges
+        - presiding_judge
+        - petitioner_parties
+        - respondent_parties
+      properties:
+        court_name:
+          type: string
+        case_number:
+          type: string
+        case_type:
+          type: string
+        title:
+          type: string
+        bench_judges:
+          type: array
+          items:
+            type: string
+        presiding_judge:
+          type: string
+        petitioner_parties:
+          type: array
+          items:
+            type: string
+        respondent_parties:
+          type: array
+          items:
+            type: string
+        next_hearing_at:
+          type: string
+          format: date-time
+
+    UpdateCaseRequest:
+      type: object
+      required:
+        - court_name
+        - case_number
+        - case_type
+        - title
+        - bench_judges
+        - presiding_judge
+        - petitioner_parties
+        - respondent_parties
+        - status
+      properties:
+        court_name:
+          type: string
+        case_number:
+          type: string
+        case_type:
+          type: string
+        title:
+          type: string
+        bench_judges:
+          type: array
+          items:
+            type: string
+        presiding_judge:
+          type: string
+        petitioner_parties:
+          type: array
+          items:
+            type: string
+        respondent_parties:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [listed, hearing, reserved, decided, disposed]
+        next_hearing_at:
+          type: string
+          format: date-time
+
+    SetLiveRequest:
+      type: object
+      required:
+        - is_live
+      properties:
+        is_live:
+          type: boolean
+
+    AssignReporterRequest:
+      type: object
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: string
+
+    PublishUpdatePayload:
+      type: object
+      required:
+        - update_type
+        - content
+      properties:
+        update_type:
+          type: string
+          enum: [argument, judicial_remark, order, break, adjournment, verdict]
+        speaker_label:
+          type: string
+        content:
+          type: string
+        event_time:
+          type: string
+          format: date-time
+        idempotency_key:
+          type: string
+
+    CorrectUpdatePayload:
+      type: object
+      required:
+        - update_type
+        - content
+      properties:
+        update_type:
+          type: string
+          enum: [argument, judicial_remark, order, break, adjournment, verdict]
+        speaker_label:
+          type: string
+        content:
+          type: string
+        idempotency_key:
+          type: string
+
+    RetractUpdatePayload:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+        idempotency_key:
+          type: string
