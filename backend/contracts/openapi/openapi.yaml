@@ -1,0 +1,84 @@
+openapi: 3.0.3
+info:
+  title: LiveLaw Platform API
+  description: High-performance Legal Journalism and Live Court Reporting Platform API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      description: Returns service liveness and database connectivity status.
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        '200':
+          description: Service is healthy and database is connected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is degraded or database connection is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - services
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+          example: ok
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-10-16T03:08:00Z'
+        services:
+          type: object
+          required:
+            - database
+          properties:
+            database:
+              type: string
+              example: connected
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+        - request_id
+        - timestamp
+      properties:
+        code:
+          type: string
+          example: NOT_FOUND
+        message:
+          type: string
+          example: The requested resource was not found
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+        request_id:
+          type: string
+          example: req_01JB3D6X7Y8Z9A0B1C2D3E4F5G
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-10-16T03:08:00Z'

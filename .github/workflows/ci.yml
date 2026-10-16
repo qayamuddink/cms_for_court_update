@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  backend-test:
+    name: Backend Tests & Lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: livelaw
+          POSTGRES_PASSWORD: livelaw_secret
+          POSTGRES_DB: livelaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify Go modules
+        working-directory: ./backend
+        run: go mod verify
+
+      - name: Validate OpenAPI Spec
+        working-directory: ./backend
+        run: go run ./cmd/openapi-lint -spec contracts/openapi/openapi.yaml
+
+      - name: Run Database Migrations (Up, Down, Up)
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgres://livelaw:livelaw_secret@localhost:5432/livelaw?sslmode=disable
+        run: |
+          go run ./cmd/migrate up
+          go run ./cmd/migrate status
+          go run ./cmd/migrate down
+          go run ./cmd/migrate up
+
+      - name: Run Backend Tests
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgres://livelaw:livelaw_secret@localhost:5432/livelaw?sslmode=disable
+        run: go test -v -race ./...
+
+      - name: Build Binaries
+        working-directory: ./backend
+        run: |
+          go build -v -o bin/api ./cmd/api
+          go build -v -o bin/migrate ./cmd/migrate
+          go build -v -o bin/openapi-lint ./cmd/openapi-lint
