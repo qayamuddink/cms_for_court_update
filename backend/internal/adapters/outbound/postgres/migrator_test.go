@@ -78,6 +78,7 @@ func TestMigratorIntegration(t *testing.T) {
 		"outbox_events",
 		"case_follows",
 		"device_tokens",
+		"refresh_tokens",
 	}
 
 	for _, table := range expectedTables {

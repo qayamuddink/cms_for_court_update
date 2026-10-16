@@ -1,11 +1,13 @@
 module github.com/livelaw/backend
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/getkin/kin-openapi v0.151.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
+	golang.org/x/crypto v0.58.0
 )
 
 require (
@@ -18,6 +20,6 @@ require (
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )

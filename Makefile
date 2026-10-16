@@ -1,4 +1,4 @@
-.PHONY: all run test lint lint-openapi migrate-up migrate-down migrate-status docker-up docker-down check help
+.PHONY: all run test lint lint-openapi migrate-up migrate-down migrate-status seed docker-up docker-down check help
 
 DATABASE_URL ?= postgres://livelaw:livelaw_secret@localhost:5432/livelaw?sslmode=disable
 OPENAPI_SPEC ?= contracts/openapi/openapi.yaml
@@ -11,7 +11,7 @@ run:
 
 test:
 	@echo "Running backend test suite..."
-	cd backend && go test -v -race ./...
+	cd backend && DATABASE_URL="$(DATABASE_URL)" go test -v -race ./...
 
 lint-openapi:
 	@echo "Validating OpenAPI specification..."
@@ -36,6 +36,10 @@ migrate-down:
 migrate-status:
 	@echo "Checking migration status..."
 	cd backend && DATABASE_URL="$(DATABASE_URL)" go run ./cmd/migrate status
+
+seed:
+	@echo "Seeding initial accounts (one per role)..."
+	cd backend && DATABASE_URL="$(DATABASE_URL)" go run ./cmd/seed
 
 docker-up:
 	@echo "Starting full Docker Compose environment..."

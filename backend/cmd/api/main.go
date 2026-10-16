@@ -13,8 +13,13 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	httpAdapter "github.com/livelaw/backend/internal/adapters/inbound/http"
+	"github.com/livelaw/backend/internal/adapters/outbound/hasher"
+	"github.com/livelaw/backend/internal/adapters/outbound/idgen"
 	"github.com/livelaw/backend/internal/adapters/outbound/postgres"
+	"github.com/livelaw/backend/internal/adapters/outbound/token"
+	"github.com/livelaw/backend/internal/application/commands"
 	"github.com/livelaw/backend/internal/application/ports"
+	"github.com/livelaw/backend/internal/application/queries"
 	"github.com/livelaw/backend/migrations"
 )
 
@@ -28,10 +33,13 @@ func main() {
 	port := getEnv("PORT", "8080")
 	dbURL := getEnv("DATABASE_URL", "postgres://livelaw:livelaw_secret@localhost:5432/livelaw?sslmode=disable")
 	runMigrations := getEnv("RUN_MIGRATIONS", "true") == "true"
+	seedData := getEnv("SEED_DATA", "true") == "true"
+	jwtSecret := getEnv("JWT_SECRET", "dev-secret-super-long-key-for-livelaw-platform-signing-jwt-tokens")
 
 	logger.Info("starting LiveLaw API server",
 		slog.String("port", port),
 		slog.Bool("run_migrations", runMigrations),
+		slog.Bool("seed_data", seedData),
 	)
 
 	// Initialize database connection
@@ -69,14 +77,39 @@ func main() {
 		logger.Info("database migrations verified and applied")
 	}
 
-	// Wire ports & adapters
+	// Wire infrastructure adapters
 	clock := ports.RealClock{}
+	idGenerator := idgen.NewUUIDv7Generator()
 	dbHealthChecker := postgres.NewHealthChecker(db)
+	userRepo := postgres.NewSQLUserRepository(db)
+	tokenRepo := postgres.NewSQLRefreshTokenRepository(db)
+	pwHasher := hasher.NewBcryptHasher(12)
+	tokenService := token.NewJWTService(jwtSecret, "livelaw-platform", 15*time.Minute, 7*24*time.Hour, clock)
 
+	// Seed initial users if enabled
+	if seedData {
+		seeder := postgres.NewSeeder(userRepo, pwHasher, idGenerator, clock, logger)
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := seeder.SeedUsers(seedCtx); err != nil {
+			logger.Warn("failed to run seeder on startup", slog.Any("error", err))
+		}
+		seedCancel()
+	}
+
+	// Wire application use cases
+	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock)
+	userQueries := queries.NewUserQueries(userRepo)
+	rateLimiter := httpAdapter.NewIPRateLimiter(20, 1*time.Minute)
+
+	// Build inbound HTTP router
 	router := httpAdapter.NewRouter(httpAdapter.RouterConfig{
 		Logger:          logger,
 		DBHealthChecker: dbHealthChecker,
 		Clock:           clock,
+		TokenService:    tokenService,
+		AuthUseCases:    authUseCases,
+		UserQueries:     userQueries,
+		RateLimiter:     rateLimiter,
 	})
 
 	server := &http.Server{

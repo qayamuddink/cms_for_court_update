@@ -27,7 +27,320 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+
+  /v1/auth/register:
+    post:
+      summary: Register reader account
+      description: Creates a new reader account and returns an authenticated token pair.
+      operationId: register
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User successfully registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid request or validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email is already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/auth/login:
+    post:
+      summary: Authenticate user
+      description: Validates email and password, returning short-lived access token and revocable refresh token.
+      operationId: login
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Account suspended or deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/auth/refresh:
+    post:
+      summary: Refresh tokens
+      description: Rotates an active refresh token and returns a new access and refresh token pair.
+      operationId: refreshToken
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token refreshed and rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: User account is suspended or deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/auth/logout:
+    post:
+      summary: Logout
+      description: Revokes the specified refresh token.
+      operationId: logout
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /v1/me:
+    get:
+      summary: Get current user profile
+      description: Retrieves the profile of the currently authenticated user.
+      operationId: getMe
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/users:
+    post:
+      summary: Create staff account (Admin only)
+      description: Administrator creates a reporter, editor, or admin account with strong password enforcement.
+      operationId: createStaff
+      tags:
+        - CMS Users
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStaffRequest'
+      responses:
+        '201':
+          description: Staff account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          description: Validation error or weak password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: List users (Admin only)
+      description: Returns a paginated list of users using keyset pagination.
+      operationId: listUsers
+      tags:
+        - CMS Users
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Number of users to return (max 100)
+          schema:
+            type: integer
+            default: 20
+        - name: before_created_at
+          in: query
+          description: Keyset pagination timestamp cursor
+          schema:
+            type: string
+            format: date-time
+        - name: before_id
+          in: query
+          description: Keyset pagination ID cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Users list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/users/{id}:
+    patch:
+      summary: Update user role or status (Admin only)
+      description: Administrator modifies system role or suspends/unsuspends a user account.
+      operationId: updateUser
+      tags:
+        - CMS Users
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          description: Invalid role or status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Admin role required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
     HealthResponse:
       type: object
@@ -52,6 +365,183 @@ components:
             database:
               type: string
               example: connected
+
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - full_name
+      properties:
+        email:
+          type: string
+          format: email
+          example: reader@livelaw.in
+        password:
+          type: string
+          format: password
+          example: ReaderPass123!
+        full_name:
+          type: string
+          example: Jane Doe
+        display_role:
+          type: string
+          enum: [public, student, lawyer, judge]
+          default: public
+        bar_council_number:
+          type: string
+          example: DL/1234/2020
+        phone:
+          type: string
+          example: '+919876543210'
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: reader@livelaw.in
+        password:
+          type: string
+          format: password
+          example: ReaderPass123!
+
+    RefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+
+    LogoutRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+
+    CreateStaffRequest:
+      type: object
+      required:
+        - email
+        - password
+        - full_name
+        - system_role
+      properties:
+        email:
+          type: string
+          format: email
+          example: reporter@livelaw.in
+        password:
+          type: string
+          format: password
+          example: ReporterPass123!
+        full_name:
+          type: string
+          example: Court Reporter
+        system_role:
+          type: string
+          enum: [reporter, editor, admin]
+        display_role:
+          type: string
+          enum: [public, student, lawyer, judge]
+          default: lawyer
+        bar_council_number:
+          type: string
+        phone:
+          type: string
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        system_role:
+          type: string
+          enum: [reader, reporter, editor, admin]
+        status:
+          type: string
+          enum: [active, suspended, deleted]
+
+    UserProfile:
+      type: object
+      required:
+        - id
+        - email
+        - full_name
+        - display_role
+        - system_role
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          example: 019277f0-cf7e-7bf0-b485-055ec71a9cf0
+        email:
+          type: string
+          format: email
+          example: reader@livelaw.in
+        full_name:
+          type: string
+          example: Jane Doe
+        display_role:
+          type: string
+          enum: [public, student, lawyer, judge]
+        system_role:
+          type: string
+          enum: [reader, reporter, editor, admin]
+        bar_council_number:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, suspended, deleted]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AuthResponse:
+      type: object
+      required:
+        - user
+        - access_token
+        - refresh_token
+        - expires_at
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    UsersListResponse:
+      type: object
+      required:
+        - users
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserProfile'
+        next_cursor:
+          type: string
+          nullable: true
+
     ErrorResponse:
       type: object
       required:
