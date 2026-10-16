@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -86,7 +88,8 @@ func setupLiveCaseTestEnv(t *testing.T) *testEnvironment {
 	assignmentRepo := postgres.NewSQLCaseAssignmentRepository(db)
 	outboxRepo := postgres.NewSQLOutboxRepository(db)
 	txMgr := postgres.NewSQLTransactionManager(db)
-	liveEngine := liveengine.NewInProcessLiveEngine(updateRepo, logger)
+	memEngine := liveengine.NewMemoryLiveEngine(logger)
+	liveEngine := liveengine.NewInProcessLiveEngine(memEngine)
 	eventPublisher := liveengine.NewLogEventPublisher(logger)
 
 	outboxWorker := postgres.NewOutboxWorker(outboxRepo, eventPublisher, 50*time.Millisecond, clock, logger)
@@ -105,6 +108,8 @@ func setupLiveCaseTestEnv(t *testing.T) *testEnvironment {
 		UserQueries:      userQueries,
 		LiveCaseUseCases: liveCaseUseCases,
 		LiveCaseQueries:  liveCaseQueries,
+		LiveEngine:       liveEngine,
+		EnableSSE:        true,
 		RateLimiter:      NewIPRateLimiter(1000, 1*time.Minute),
 	})
 
@@ -567,6 +572,130 @@ func TestLiveCase_TransactionalOutboxWorker(t *testing.T) {
 	err = env.db.QueryRow("SELECT published_at FROM outbox_events WHERE id = $1", outboxID).Scan(&publishedAt)
 	if err != nil || publishedAt == nil {
 		t.Fatalf("outbox event %s was not marked published! err=%v, publishedAt=%v", outboxID, err, publishedAt)
+	}
+}
+
+func TestLiveCase_SSEStreaming(t *testing.T) {
+	env := setupLiveCaseTestEnv(t)
+	c := createTestCase(t, env, "SSE Stream Test Case")
+
+	_ = doRequest(t, env.router, http.MethodPost, fmt.Sprintf("/v1/cms/cases/%s/assign", c.ID), env.editorToken, AssignReporterRequest{UserID: env.reporterUserID}, nil)
+	_ = doRequest(t, env.router, http.MethodPost, fmt.Sprintf("/v1/cms/cases/%s/live", c.ID), env.editorToken, SetLiveRequest{IsLive: true}, nil)
+
+	// Start test HTTP server to test real SSE stream connection
+	ts := httptest.NewServer(env.router)
+	defer ts.Close()
+
+	// 1. Post initial update 1
+	p1 := PublishUpdatePayload{
+		UpdateType:   livecase.UpdateTypeArgument,
+		SpeakerLabel: stringPtr("Petitioner"),
+		Content:      "Initial opening argument",
+	}
+	r1 := doRequest(t, env.router, http.MethodPost, fmt.Sprintf("/v1/cms/cases/%s/updates", c.ID), env.reporterToken, p1, nil)
+	if r1.Code != http.StatusCreated {
+		t.Fatalf("failed posting update 1: %s", r1.Body.String())
+	}
+
+	// 2. Connect client with after_sequence = 0 to stream from start
+	reqCtx, reqCancel := context.WithCancel(context.Background())
+	defer reqCancel()
+
+	streamReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fmt.Sprintf("%s/v1/cases/%s/stream?after_sequence=0", ts.URL, c.ID), nil)
+	if err != nil {
+		t.Fatalf("failed building request: %v", err)
+	}
+	resp, err := ts.Client().Do(streamReq)
+	if err != nil {
+		t.Fatalf("failed connecting to SSE stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(b))
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("expected Content-Type text/event-stream, got %s", ct)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+
+	// Read update 1
+	var foundID1 bool
+	for i := 0; i < 15; i++ {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("failed reading line: %v", err)
+		}
+		if strings.HasPrefix(line, "id: 1") {
+			foundID1 = true
+			break
+		}
+	}
+	if !foundID1 {
+		t.Fatalf("did not receive id: 1 in SSE stream")
+	}
+
+	// 3. Post live update 2 while subscriber is connected
+	p2 := PublishUpdatePayload{
+		UpdateType:   livecase.UpdateTypeArgument,
+		SpeakerLabel: stringPtr("Respondent"),
+		Content:      "Counter argument in real-time",
+	}
+	r2 := doRequest(t, env.router, http.MethodPost, fmt.Sprintf("/v1/cms/cases/%s/updates", c.ID), env.reporterToken, p2, nil)
+	if r2.Code != http.StatusCreated {
+		t.Fatalf("failed posting update 2: %s", r2.Body.String())
+	}
+
+	// Read update 2
+	var foundID2 bool
+	for i := 0; i < 20; i++ {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("failed reading line: %v", err)
+		}
+		if strings.HasPrefix(line, "id: 2") {
+			foundID2 = true
+			break
+		}
+	}
+	if !foundID2 {
+		t.Fatalf("did not receive id: 2 in SSE stream")
+	}
+
+	reqCancel() // close first connection
+
+	// 4. Test Reconnection with Last-Event-ID: 1 -> should immediately receive update 2 and NOT update 1
+	reconnCtx, reconnCancel := context.WithCancel(context.Background())
+	defer reconnCancel()
+
+	reconnReq, _ := http.NewRequestWithContext(reconnCtx, http.MethodGet, fmt.Sprintf("%s/v1/cases/%s/stream", ts.URL, c.ID), nil)
+	reconnReq.Header.Set("Last-Event-ID", "1")
+
+	reconnResp, err := ts.Client().Do(reconnReq)
+	if err != nil {
+		t.Fatalf("failed reconnecting: %v", err)
+	}
+	defer reconnResp.Body.Close()
+
+	reconnReader := bufio.NewReader(reconnResp.Body)
+	var reconnFoundID2 bool
+	for i := 0; i < 15; i++ {
+		line, err := reconnReader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("failed reading line: %v", err)
+		}
+		if strings.HasPrefix(line, "id: 1") {
+			t.Fatalf("unexpected id: 1 received on reconnection from Last-Event-ID: 1")
+		}
+		if strings.HasPrefix(line, "id: 2") {
+			reconnFoundID2 = true
+			break
+		}
+	}
+	if !reconnFoundID2 {
+		t.Fatalf("reconnection failed to receive id: 2")
 	}
 }
 

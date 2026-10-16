@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	liveenginev1 "github.com/livelaw/backend/contracts/proto/v1"
+	grpcAdapter "github.com/livelaw/backend/internal/adapters/inbound/grpc"
 	httpAdapter "github.com/livelaw/backend/internal/adapters/inbound/http"
 	"github.com/livelaw/backend/internal/adapters/outbound/hasher"
 	"github.com/livelaw/backend/internal/adapters/outbound/idgen"
@@ -22,6 +25,8 @@ import (
 	"github.com/livelaw/backend/internal/application/ports"
 	"github.com/livelaw/backend/internal/application/queries"
 	"github.com/livelaw/backend/migrations"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -32,6 +37,10 @@ func main() {
 	slog.SetDefault(logger)
 
 	port := getEnv("PORT", "8080")
+	grpcPort := getEnv("GRPC_PORT", "9090")
+	liveEngineMode := getEnv("LIVE_ENGINE_MODE", "inprocess")
+	grpcAddr := getEnv("LIVE_ENGINE_GRPC_ADDR", "localhost:"+grpcPort)
+	enableSSE := getEnv("ENABLE_SSE_STREAM", "true") == "true"
 	dbURL := getEnv("DATABASE_URL", "postgres://livelaw:livelaw_secret@localhost:5432/livelaw?sslmode=disable")
 	runMigrations := getEnv("RUN_MIGRATIONS", "true") == "true"
 	seedData := getEnv("SEED_DATA", "true") == "true"
@@ -39,6 +48,9 @@ func main() {
 
 	logger.Info("starting LiveLaw API server",
 		slog.String("port", port),
+		slog.String("grpc_port", grpcPort),
+		slog.String("live_engine_mode", liveEngineMode),
+		slog.Bool("enable_sse", enableSSE),
 		slog.Bool("run_migrations", runMigrations),
 		slog.Bool("seed_data", seedData),
 	)
@@ -87,13 +99,47 @@ func main() {
 	pwHasher := hasher.NewBcryptHasher(12)
 	tokenService := token.NewJWTService(jwtSecret, "livelaw-platform", 15*time.Minute, 7*24*time.Hour, clock)
 
-	// Phase 3 adapters: cases, updates, outbox & live engine
+	// Core memory engine & gRPC server adapter
+	memEngine := liveengine.NewMemoryLiveEngine(logger)
+	grpcServer := grpc.NewServer()
+	liveEngineServer := grpcAdapter.NewLiveEngineServer(memEngine, logger)
+	liveenginev1.RegisterLiveEngineServiceServer(grpcServer, liveEngineServer)
+
+	grpcListener, err := net.Listen("tcp", ":"+grpcPort)
+	if err != nil {
+		logger.Error("failed to bind gRPC port", slog.String("port", grpcPort), slog.Any("error", err))
+		os.Exit(1)
+	}
+	go func() {
+		logger.Info("gRPC LiveEngine server listening", slog.String("port", grpcPort))
+		if err := grpcServer.Serve(grpcListener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			logger.Error("gRPC server error", slog.Any("error", err))
+		}
+	}()
+
+	// Wire LiveEnginePort according to LIVE_ENGINE_MODE (inprocess vs grpc)
+	var liveEnginePort ports.LiveEnginePort
+	var grpcConn *grpc.ClientConn
+	if liveEngineMode == "grpc" {
+		logger.Info("configuring LiveEnginePort using gRPC client", slog.String("addr", grpcAddr))
+		conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			logger.Error("failed to connect to gRPC live engine", slog.String("addr", grpcAddr), slog.Any("error", err))
+			os.Exit(1)
+		}
+		grpcConn = conn
+		liveEnginePort = liveengine.NewGRPCLiveEngineClient(conn, logger)
+	} else {
+		logger.Info("configuring LiveEnginePort using in-process memory engine")
+		liveEnginePort = liveengine.NewInProcessLiveEngine(memEngine)
+	}
+
+	// Repositories
 	caseRepo := postgres.NewSQLCourtCaseRepository(db)
 	updateRepo := postgres.NewSQLLiveUpdateRepository(db)
 	assignmentRepo := postgres.NewSQLCaseAssignmentRepository(db)
 	outboxRepo := postgres.NewSQLOutboxRepository(db)
 	txMgr := postgres.NewSQLTransactionManager(db)
-	liveEngine := liveengine.NewInProcessLiveEngine(updateRepo, logger)
 	eventPublisher := liveengine.NewLogEventPublisher(logger)
 
 	// Seed initial users if enabled
@@ -112,10 +158,10 @@ func main() {
 	outboxWorker := postgres.NewOutboxWorker(outboxRepo, eventPublisher, 200*time.Millisecond, clock, logger)
 	go outboxWorker.Start(workerCtx)
 
-	// Wire application use cases
+	// Wire application use cases (domain and use cases NEVER change between modes!)
 	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock)
 	userQueries := queries.NewUserQueries(userRepo)
-	liveCaseUseCases := commands.NewLiveCaseUseCases(caseRepo, updateRepo, assignmentRepo, outboxRepo, txMgr, liveEngine, userRepo, idGenerator, clock)
+	liveCaseUseCases := commands.NewLiveCaseUseCases(caseRepo, updateRepo, assignmentRepo, outboxRepo, txMgr, liveEnginePort, userRepo, idGenerator, clock)
 	liveCaseQueries := queries.NewLiveCaseQueries(caseRepo, updateRepo, assignmentRepo)
 	rateLimiter := httpAdapter.NewIPRateLimiter(20, 1*time.Minute)
 
@@ -129,6 +175,8 @@ func main() {
 		UserQueries:      userQueries,
 		LiveCaseUseCases: liveCaseUseCases,
 		LiveCaseQueries:  liveCaseQueries,
+		LiveEngine:       liveEnginePort,
+		EnableSSE:        enableSSE,
 		RateLimiter:      rateLimiter,
 	})
 
@@ -153,8 +201,12 @@ func main() {
 	}()
 
 	<-stop
-	logger.Info("shutting down HTTP server gracefully...")
-	workerCancel() // Terminate outbox worker background loop
+	logger.Info("shutting down servers gracefully...")
+	workerCancel()         // Terminate outbox worker background loop
+	grpcServer.GracefulStop() // Stop gRPC server
+	if grpcConn != nil {
+		_ = grpcConn.Close()
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

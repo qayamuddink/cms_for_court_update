@@ -74,6 +74,8 @@ services:
         condition: service_completed_successfully
     environment:
       PORT: 8080
+      GRPC_PORT: 9090
+      LIVE_ENGINE_MODE: ${LIVE_ENGINE_MODE:-inprocess}
       DATABASE_URL: postgres://${POSTGRES_USER:-livelaw}:${POSTGRES_PASSWORD:-livelaw_secret}@postgres:5432/${POSTGRES_DB:-livelaw}?sslmode=disable
       RUN_MIGRATIONS: "true"
       S3_ENDPOINT: http://minio:9000

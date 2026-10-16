@@ -1,4 +1,4 @@
-.PHONY: all run test lint lint-openapi migrate-up migrate-down migrate-status seed docker-up docker-down check help
+.PHONY: all run test proto lint lint-openapi migrate-up migrate-down migrate-status seed docker-up docker-down check help
 
 DATABASE_URL ?= postgres://livelaw:livelaw_secret@localhost:5432/livelaw?sslmode=disable
 OPENAPI_SPEC ?= contracts/openapi/openapi.yaml
@@ -12,6 +12,10 @@ run:
 test:
 	@echo "Running backend test suite..."
 	cd backend && DATABASE_URL="$(DATABASE_URL)" go test -v -race ./...
+
+proto:
+	@echo "Generating Go code from Protobuf contracts..."
+	@protoc -I backend/contracts/proto -I /home/qyam/.local/include --go_out=backend/contracts/proto --go_opt=paths=source_relative --go-grpc_out=backend/contracts/proto --go-grpc_opt=paths=source_relative backend/contracts/proto/v1/live_engine.proto
 
 lint-openapi:
 	@echo "Validating OpenAPI specification..."

@@ -475,6 +475,51 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/cases/{id}/stream:
+    get:
+      summary: Stream live courtroom ticker updates (SSE)
+      description: Server-Sent Events stream for real-time court ticker updates. Each event contains the sequence number as event ID for gap detection.
+      operationId: streamCaseUpdates
+      tags:
+        - Live Cases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+        - name: after_sequence
+          in: query
+          description: Stream updates with sequence number strictly greater than this value
+          schema:
+            type: integer
+            default: 0
+        - name: Last-Event-ID
+          in: header
+          description: Standard SSE last received event ID (sequence number)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Real-time event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          description: Court case not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /v1/cms/cases:
     post:
       summary: Create court case (Editor/Admin only)

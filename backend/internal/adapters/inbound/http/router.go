@@ -21,6 +21,8 @@ type RouterConfig struct {
 	UserQueries      *queries.UserQueries
 	LiveCaseUseCases *commands.LiveCaseUseCases
 	LiveCaseQueries  *queries.LiveCaseQueries
+	LiveEngine       ports.LiveEnginePort
+	EnableSSE        bool
 	RateLimiter      *IPRateLimiter
 }
 
@@ -56,11 +58,14 @@ func NewRouter(cfg RouterConfig) http.Handler {
 
 	// 3. Live Case Public endpoints
 	if cfg.LiveCaseQueries != nil {
-		liveHandler := NewLiveCasePublicHandler(cfg.LiveCaseQueries)
+		liveHandler := NewLiveCasePublicHandler(cfg.LiveCaseQueries, cfg.LiveEngine)
 		mux.HandleFunc("GET /v1/cases/live", liveHandler.ListLiveCases)
 		mux.HandleFunc("GET /v1/cases/{id}", liveHandler.GetCase)
 		mux.HandleFunc("GET /v1/cases/{id}/updates", liveHandler.GetUpdates)
 		mux.HandleFunc("GET /v1/cases/{id}/updates/latest", liveHandler.GetLatestUpdates)
+		if cfg.EnableSSE {
+			mux.HandleFunc("GET /v1/cases/{id}/stream", liveHandler.StreamUpdates)
+		}
 	}
 
 	// 4. Live Case CMS endpoints (Staff only)

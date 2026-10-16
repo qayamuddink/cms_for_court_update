@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package livelaw.liveengine.v1;
+
+option go_package = "github.com/livelaw/backend/contracts/proto/v1;liveenginev1";
+
+import "google/protobuf/timestamp.proto";
+
+// LiveEngineService defines the swappable high-performance real-time ticker broadcast engine.
+service LiveEngineService {
+  // Ingest accepts a live courtroom update event from the application monolith.
+  rpc Ingest(IngestRequest) returns (IngestResponse);
+
+  // Subscribe opens a real-time stream of updates for a court case, replaying from after_sequence.
+  rpc Subscribe(SubscribeRequest) returns (stream LiveUpdateEvent);
+
+  // Snapshot returns the latest N updates and the current highest sequence number for a court case.
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+}
+
+// LiveUpdateEvent represents a versioned courtroom ticker event.
+message LiveUpdateEvent {
+  int32 schema_version = 1;
+  string event_id = 2;
+  string event_type = 3;
+  string case_id = 4;
+  int64 sequence_no = 5;
+  string update_id = 6;
+  string update_type = 7;
+  optional string speaker_label = 8;
+  string content = 9;
+  string status = 10;
+  optional string corrects_update_id = 11;
+  google.protobuf.Timestamp event_time = 12;
+  google.protobuf.Timestamp created_at = 13;
+}
+
+// IngestRequest carries an update event to broadcast.
+message IngestRequest {
+  LiveUpdateEvent event = 1;
+}
+
+// IngestResponse acknowledges event processing by the live engine.
+message IngestResponse {
+  bool accepted = 1;
+  int64 sequence_no = 2;
+}
+
+// SubscribeRequest requests streaming of updates for a case starting after a sequence number.
+message SubscribeRequest {
+  string case_id = 1;
+  int64 after_sequence = 2;
+}
+
+// SnapshotRequest requests current state for a court case ticker.
+message SnapshotRequest {
+  string case_id = 1;
+  int32 limit = 2;
+  optional int64 after_sequence = 3;
+}
+
+// SnapshotResponse returns the highest sequence number and latest updates.
+message SnapshotResponse {
+  string case_id = 1;
+  int64 highest_sequence_no = 2;
+  repeated LiveUpdateEvent updates = 3;
+}

@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -48,16 +50,37 @@ func TestMigratorIntegration(t *testing.T) {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
 		t.Skipf("Skipping postgres integration test: database ping failed: %v", err)
 	}
 
-	migrator := NewMigrator(db, migrations.FS)
+	testDBName := fmt.Sprintf("livelaw_migrator_test_%d", time.Now().UnixNano()%1000000)
+	_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+testDBName)
+	if _, err := db.ExecContext(ctx, "CREATE DATABASE "+testDBName); err != nil {
+		t.Skipf("Skipping isolated migration test (no permission to create database): %v", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DROP DATABASE IF EXISTS "+testDBName)
+	}()
 
-	// Test 1: Clean rollback of everything
+	parsedURL, err := url.Parse(dbURL)
+	if err != nil {
+		t.Fatalf("failed parsing db URL: %v", err)
+	}
+	parsedURL.Path = "/" + testDBName
+
+	testDB, err := sql.Open("pgx", parsedURL.String())
+	if err != nil {
+		t.Fatalf("failed to connect to isolated test db: %v", err)
+	}
+	defer testDB.Close()
+
+	migrator := NewMigrator(testDB, migrations.FS)
+
+	// Test 1: Clean rollback of empty db
 	if err := migrator.DownAll(ctx); err != nil {
 		t.Fatalf("failed to down-all migrations: %v", err)
 	}
@@ -87,7 +110,7 @@ func TestMigratorIntegration(t *testing.T) {
 			SELECT FROM information_schema.tables 
 			WHERE table_schema = 'public' AND table_name = $1
 		);`
-		if err := db.QueryRowContext(ctx, query, table).Scan(&exists); err != nil {
+		if err := testDB.QueryRowContext(ctx, query, table).Scan(&exists); err != nil {
 			t.Fatalf("failed to query table existence for %s: %v", table, err)
 		}
 		if !exists {
@@ -118,7 +141,7 @@ func TestMigratorIntegration(t *testing.T) {
 			SELECT FROM information_schema.tables 
 			WHERE table_schema = 'public' AND table_name = $1
 		);`
-		if err := db.QueryRowContext(ctx, query, table).Scan(&exists); err != nil {
+		if err := testDB.QueryRowContext(ctx, query, table).Scan(&exists); err != nil {
 			t.Fatalf("failed to query table existence for %s: %v", table, err)
 		}
 		if exists {

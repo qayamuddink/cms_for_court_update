@@ -1,22 +1,30 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/livelaw/backend/internal/application/ports"
 	"github.com/livelaw/backend/internal/application/queries"
 	"github.com/livelaw/backend/internal/domain/livecase"
 )
 
 // LiveCasePublicHandler handles public reader queries for court cases and live updates.
 type LiveCasePublicHandler struct {
-	queries *queries.LiveCaseQueries
+	queries    *queries.LiveCaseQueries
+	liveEngine ports.LiveEnginePort
 }
 
 // NewLiveCasePublicHandler creates a new LiveCasePublicHandler.
-func NewLiveCasePublicHandler(q *queries.LiveCaseQueries) *LiveCasePublicHandler {
-	return &LiveCasePublicHandler{queries: q}
+func NewLiveCasePublicHandler(q *queries.LiveCaseQueries, liveEngine ports.LiveEnginePort) *LiveCasePublicHandler {
+	return &LiveCasePublicHandler{
+		queries:    q,
+		liveEngine: liveEngine,
+	}
 }
 
 // LiveCasesResponse wraps a slice of active court cases.
@@ -143,4 +151,84 @@ func (h *LiveCasePublicHandler) GetLatestUpdates(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusOK, LiveUpdatesResponse{Updates: updates})
+}
+
+// StreamUpdates handles GET /v1/cases/{id}/stream using Server-Sent Events (SSE).
+// Sends the sequence number as the SSE event ID so clients can detect any gaps.
+func (h *LiveCasePublicHandler) StreamUpdates(w http.ResponseWriter, r *http.Request) {
+	reqID := GetRequestID(r.Context())
+	caseID := r.PathValue("id")
+	if caseID == "" {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_ID", "Court case ID is required", reqID)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSONError(w, http.StatusInternalServerError, "STREAMING_UNSUPPORTED", "Streaming not supported by server", reqID)
+		return
+	}
+
+	// Verify case exists
+	_, err := h.queries.GetCase(r.Context(), caseID)
+	if err != nil {
+		if errors.Is(err, queries.ErrCaseNotFound) {
+			writeJSONError(w, http.StatusNotFound, "CASE_NOT_FOUND", "Court case not found", reqID)
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed retrieving court case", reqID)
+		return
+	}
+
+	var afterSeq int64 = 0
+	if lastEventID := r.Header.Get("Last-Event-ID"); lastEventID != "" {
+		if parsed, err := strconv.ParseInt(lastEventID, 10, 64); err == nil && parsed >= 0 {
+			afterSeq = parsed
+		}
+	} else if queryAfter := r.URL.Query().Get("after_sequence"); queryAfter != "" {
+		if parsed, err := strconv.ParseInt(queryAfter, 10, 64); err == nil && parsed >= 0 {
+			afterSeq = parsed
+		}
+	}
+
+	if h.liveEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "LIVE_ENGINE_UNAVAILABLE", "Live streaming engine unavailable", reqID)
+		return
+	}
+
+	ch, err := h.liveEngine.Subscribe(r.Context(), caseID, afterSeq)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "SUBSCRIBE_FAILED", "Failed subscribing to live stream", reqID)
+		return
+	}
+
+	// Set SSE response headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher.Flush()
+
+	heartbeatTicker := time.NewTicker(15 * time.Second)
+	defer heartbeatTicker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeatTicker.C:
+			_, _ = fmt.Fprintf(w, ": ping\n\n")
+			flusher.Flush()
+		case update, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(update)
+			if err != nil {
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "id: %d\nevent: live_update\ndata: %s\n\n", update.SequenceNo, data)
+			flusher.Flush()
+		}
+	}
 }
