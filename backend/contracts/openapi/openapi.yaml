@@ -1013,6 +1013,525 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/articles:
+    get:
+      summary: Get published articles feed
+      description: Returns published news, commentaries, editorials, and judgment summaries using keyset pagination.
+      operationId: listArticlesFeed
+      tags:
+        - Articles
+      parameters:
+        - name: type
+          in: query
+          description: Filter by article type
+          schema:
+            type: string
+            enum: [news, commentary, editorial, judgment_summary]
+        - name: category
+          in: query
+          description: Filter by legal category
+          schema:
+            type: string
+        - name: tag
+          in: query
+          description: Filter by keyword tag
+          schema:
+            type: string
+        - name: court_case_id
+          in: query
+          description: Filter articles covering a specific court case
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Max items to return (default 20, max 100)
+          schema:
+            type: integer
+            default: 20
+        - name: cursor
+          in: query
+          description: Keyset pagination cursor from previous response
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Keyset paginated article feed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/articles/{slug}:
+    get:
+      summary: Get article by slug
+      description: Retrieves a published article by slug. Applies paywall locking (truncating body) for premium articles if unauthenticated.
+      operationId: getArticleBySlug
+      tags:
+        - Articles
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: URL-friendly article slug
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleDetail'
+        '404':
+          description: Article not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/judgments/{id}:
+    get:
+      summary: Get judgment summary by ID
+      description: Retrieves an official judgment summary along with a short-lived presigned download URL for the attached official PDF.
+      operationId: getJudgment
+      tags:
+        - Judgments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Judgment summary article UUID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Judgment summary with PDF download URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JudgmentDetail'
+        '404':
+          description: Judgment summary not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cases/{id}/judgment:
+    get:
+      summary: Get judgment summary for court case
+      description: Retrieves the judgment summary and attached official judgment PDF linked to a court case.
+      operationId: getCaseJudgment
+      tags:
+        - Judgments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Court case UUID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Judgment summary for court case
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JudgmentDetail'
+        '404':
+          description: No judgment summary linked to case
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles:
+    post:
+      summary: Create article draft (Staff only)
+      description: Creates a new article draft. Reporters, editors, and admins can create drafts.
+      operationId: createArticleDraft
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateArticleDraftRequest'
+      responses:
+        '201':
+          description: Article draft created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: List CMS articles
+      description: Lists articles for the editorial CMS with status, author, and search filters.
+      operationId: listCMSArticles
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, in_review, published, archived]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [news, commentary, editorial, judgment_summary]
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: author_id
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: CMS articles list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CMSArticleListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}:
+    get:
+      summary: Get CMS article detail
+      description: Retrieves complete editorial article detail by ID.
+      operationId: getCMSArticle
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '404':
+          description: Article not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    patch:
+      summary: Update article draft (Optimistic Locking)
+      description: Updates an article draft. Requires expected_version for optimistic concurrency control.
+      operationId: updateArticleDraft
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateArticleDraftRequest'
+      responses:
+        '200':
+          description: Article draft updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Optimistic lock conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}/submit:
+    post:
+      summary: Submit draft for review
+      description: Author or editor transitions draft to in_review.
+      operationId: submitArticleForReview
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article transitioned to in_review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          description: Invalid status transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}/send-back:
+    post:
+      summary: Send back article for revision (Editor/Admin only)
+      description: Editor returns article in review back to draft with mandatory review comments.
+      operationId: sendBackArticle
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendBackRequest'
+      responses:
+        '200':
+          description: Article returned to draft
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          description: Comment required or invalid status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}/publish:
+    post:
+      summary: Approve and publish article (Editor/Admin only)
+      description: Editor approves and publishes article, making it visible on public feeds.
+      operationId: publishArticle
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          description: Invalid status transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}/archive:
+    post:
+      summary: Archive article (Editor/Admin only)
+      description: Transitions an article into archived status.
+      operationId: archiveArticle
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+
+  /v1/cms/articles/{id}/attachment:
+    post:
+      summary: Confirm PDF attachment metadata
+      description: Attaches uploaded PDF object key, size, and checksum to an article.
+      operationId: attachArticlePDF
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachPDFRequest'
+      responses:
+        '200':
+          description: Attachment confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+
+  /v1/cms/judgments:
+    post:
+      summary: Create judgment summary (Editor/Admin only)
+      description: Creates a judgment summary article and links it to a court case in a single operation.
+      operationId: createJudgmentSummary
+      tags:
+        - CMS Judgments
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJudgmentRequest'
+      responses:
+        '201':
+          description: Judgment summary created and linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+
+  /v1/cms/uploads/presigned-url:
+    post:
+      summary: Request direct S3 presigned upload URL
+      description: Validates file type and size constraints and returns a direct S3 presigned PUT URL.
+      operationId: requestUploadURL
+      tags:
+        - CMS Uploads
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestUploadURLRequest'
+      responses:
+        '200':
+          description: Presigned upload URL generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadURLResponse'
+        '400':
+          description: Invalid file type or file too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1530,3 +2049,428 @@ components:
           type: string
         idempotency_key:
           type: string
+
+    Article:
+      type: object
+      required:
+        - id
+        - slug
+        - title
+        - summary
+        - article_type
+        - access_level
+        - status
+        - author_id
+        - category
+        - version
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        summary:
+          type: string
+        body_blocks:
+          type: array
+          items:
+            type: object
+        article_type:
+          type: string
+          enum: [news, commentary, editorial, judgment_summary]
+        access_level:
+          type: string
+          enum: [free, premium]
+        status:
+          type: string
+          enum: [draft, in_review, published, archived]
+        author_id:
+          type: string
+        editor_id:
+          type: string
+        court_case_id:
+          type: string
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        court_name:
+          type: string
+        citation:
+          type: string
+        pdf_storage_key:
+          type: string
+        pdf_size_bytes:
+          type: integer
+        pdf_checksum:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ArticleFeedItem:
+      type: object
+      required:
+        - id
+        - slug
+        - title
+        - summary
+        - article_type
+        - access_level
+        - category
+        - has_attachment
+        - reading_time_minutes
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        summary:
+          type: string
+        article_type:
+          type: string
+          enum: [news, commentary, editorial, judgment_summary]
+        access_level:
+          type: string
+          enum: [free, premium]
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        court_name:
+          type: string
+        citation:
+          type: string
+        has_attachment:
+          type: boolean
+        reading_time_minutes:
+          type: integer
+        published_at:
+          type: string
+          format: date-time
+
+    FeedResponse:
+      type: object
+      required:
+        - articles
+      properties:
+        articles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArticleFeedItem'
+        next_cursor:
+          type: string
+
+    ArticleDetail:
+      type: object
+      required:
+        - id
+        - slug
+        - title
+        - summary
+        - article_type
+        - access_level
+        - status
+        - author_id
+        - category
+        - is_locked
+        - reading_time_minutes
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        summary:
+          type: string
+        body_blocks:
+          type: array
+          items:
+            type: object
+        article_type:
+          type: string
+          enum: [news, commentary, editorial, judgment_summary]
+        access_level:
+          type: string
+          enum: [free, premium]
+        status:
+          type: string
+          enum: [draft, in_review, published, archived]
+        author_id:
+          type: string
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        court_name:
+          type: string
+        citation:
+          type: string
+        court_case_id:
+          type: string
+        pdf_storage_key:
+          type: string
+        pdf_download_url:
+          type: string
+        pdf_size_bytes:
+          type: integer
+        is_locked:
+          type: boolean
+        reading_time_minutes:
+          type: integer
+        published_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    JudgmentDetail:
+      type: object
+      required:
+        - id
+        - slug
+        - title
+        - summary
+        - access_level
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        body_blocks:
+          type: array
+          items:
+            type: object
+        access_level:
+          type: string
+          enum: [free, premium]
+        court_case_id:
+          type: string
+        court_name:
+          type: string
+        citation:
+          type: string
+        pdf_storage_key:
+          type: string
+        pdf_download_url:
+          type: string
+        pdf_size_bytes:
+          type: integer
+        published_at:
+          type: string
+          format: date-time
+
+    CMSArticleListResponse:
+      type: object
+      required:
+        - articles
+        - total
+      properties:
+        articles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Article'
+        total:
+          type: integer
+
+    CreateArticleDraftRequest:
+      type: object
+      required:
+        - title
+        - summary
+        - category
+      properties:
+        title:
+          type: string
+        subtitle:
+          type: string
+        summary:
+          type: string
+        body_blocks:
+          type: array
+          items:
+            type: object
+        article_type:
+          type: string
+          enum: [news, commentary, editorial, judgment_summary]
+          default: news
+        access_level:
+          type: string
+          enum: [free, premium]
+          default: free
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        court_case_id:
+          type: string
+        court_name:
+          type: string
+        citation:
+          type: string
+
+    UpdateArticleDraftRequest:
+      type: object
+      required:
+        - expected_version
+        - title
+        - summary
+        - category
+      properties:
+        expected_version:
+          type: integer
+          description: Optimistic lock version counter
+        title:
+          type: string
+        subtitle:
+          type: string
+        summary:
+          type: string
+        body_blocks:
+          type: array
+          items:
+            type: object
+        article_type:
+          type: string
+          enum: [news, commentary, editorial, judgment_summary]
+        access_level:
+          type: string
+          enum: [free, premium]
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        court_case_id:
+          type: string
+        court_name:
+          type: string
+        citation:
+          type: string
+
+    SendBackRequest:
+      type: object
+      required:
+        - comment
+      properties:
+        comment:
+          type: string
+
+    AttachPDFRequest:
+      type: object
+      required:
+        - storage_key
+        - size_bytes
+        - checksum
+      properties:
+        storage_key:
+          type: string
+        size_bytes:
+          type: integer
+        checksum:
+          type: string
+
+    CreateJudgmentRequest:
+      type: object
+      required:
+        - court_case_id
+        - title
+        - summary
+        - court_name
+      properties:
+        court_case_id:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        body_blocks:
+          type: array
+          items:
+            type: object
+        access_level:
+          type: string
+          enum: [free, premium]
+          default: free
+        court_name:
+          type: string
+        citation:
+          type: string
+        pdf_storage_key:
+          type: string
+        pdf_size_bytes:
+          type: integer
+        pdf_checksum:
+          type: string
+
+    RequestUploadURLRequest:
+      type: object
+      required:
+        - filename
+        - content_type
+        - size_bytes
+      properties:
+        filename:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+        purpose:
+          type: string
+          enum: [judgment_pdf, article_image]
+          default: judgment_pdf
+
+    UploadURLResponse:
+      type: object
+      required:
+        - upload_url
+        - storage_key
+        - expires_in_seconds
+      properties:
+        upload_url:
+          type: string
+        storage_key:
+          type: string
+        expires_in_seconds:
+          type: integer
+

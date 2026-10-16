@@ -16,6 +16,8 @@ import (
 	liveenginev1 "github.com/livelaw/backend/contracts/proto/v1"
 	grpcAdapter "github.com/livelaw/backend/internal/adapters/inbound/grpc"
 	httpAdapter "github.com/livelaw/backend/internal/adapters/inbound/http"
+	"github.com/livelaw/backend/internal/adapters/outbound/entitlement"
+	"github.com/livelaw/backend/internal/adapters/outbound/filestore"
 	"github.com/livelaw/backend/internal/adapters/outbound/hasher"
 	"github.com/livelaw/backend/internal/adapters/outbound/idgen"
 	"github.com/livelaw/backend/internal/adapters/outbound/liveengine"
@@ -46,6 +48,12 @@ func main() {
 	seedData := getEnv("SEED_DATA", "true") == "true"
 	jwtSecret := getEnv("JWT_SECRET", "dev-secret-super-long-key-for-livelaw-platform-signing-jwt-tokens")
 
+	// S3 / MinIO configuration
+	s3Endpoint := getEnv("S3_ENDPOINT", "http://localhost:9000")
+	s3AccessKey := getEnv("S3_ACCESS_KEY", "minioadmin")
+	s3SecretKey := getEnv("S3_SECRET_KEY", "minioadmin")
+	s3Bucket := getEnv("S3_BUCKET", "livelaw-files")
+
 	logger.Info("starting LiveLaw API server",
 		slog.String("port", port),
 		slog.String("grpc_port", grpcPort),
@@ -53,6 +61,8 @@ func main() {
 		slog.Bool("enable_sse", enableSSE),
 		slog.Bool("run_migrations", runMigrations),
 		slog.Bool("seed_data", seedData),
+		slog.String("s3_endpoint", s3Endpoint),
+		slog.String("s3_bucket", s3Bucket),
 	)
 
 	// Initialize database connection
@@ -99,6 +109,26 @@ func main() {
 	pwHasher := hasher.NewBcryptHasher(12)
 	tokenService := token.NewJWTService(jwtSecret, "livelaw-platform", 15*time.Minute, 7*24*time.Hour, clock)
 
+	// MinIO object storage adapter
+	fileStore, err := filestore.NewMinIOFileStore(filestore.Config{
+		Endpoint:        s3Endpoint,
+		AccessKeyID:     s3AccessKey,
+		SecretAccessKey: s3SecretKey,
+		BucketName:      s3Bucket,
+		UseSSL:          false,
+	})
+	if err != nil {
+		logger.Warn("failed to initialize MinIO file store, file operations may degrade", slog.Any("error", err))
+	} else {
+		initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := fileStore.EnsureBucket(initCtx); err != nil {
+			logger.Warn("failed to ensure S3 bucket exists", slog.String("bucket", s3Bucket), slog.Any("error", err))
+		} else {
+			logger.Info("MinIO file storage connected and bucket verified", slog.String("bucket", s3Bucket))
+		}
+		initCancel()
+	}
+
 	// Core memory engine & gRPC server adapter
 	memEngine := liveengine.NewMemoryLiveEngine(logger)
 	grpcServer := grpc.NewServer()
@@ -141,6 +171,8 @@ func main() {
 	outboxRepo := postgres.NewSQLOutboxRepository(db)
 	txMgr := postgres.NewSQLTransactionManager(db)
 	eventPublisher := liveengine.NewLogEventPublisher(logger)
+	articleRepo := postgres.NewSQLArticleRepository(db)
+	entitlementChecker := entitlement.NewSQLSubscriptionChecker(db, userRepo)
 
 	// Seed initial users if enabled
 	if seedData {
@@ -163,6 +195,8 @@ func main() {
 	userQueries := queries.NewUserQueries(userRepo)
 	liveCaseUseCases := commands.NewLiveCaseUseCases(caseRepo, updateRepo, assignmentRepo, outboxRepo, txMgr, liveEnginePort, userRepo, idGenerator, clock)
 	liveCaseQueries := queries.NewLiveCaseQueries(caseRepo, updateRepo, assignmentRepo)
+	articleUseCases := commands.NewArticleUseCases(articleRepo, idGenerator, clock, fileStore)
+	articleQueries := queries.NewArticleQueries(articleRepo, entitlementChecker, fileStore)
 	rateLimiter := httpAdapter.NewIPRateLimiter(20, 1*time.Minute)
 
 	// Build inbound HTTP router
@@ -175,6 +209,8 @@ func main() {
 		UserQueries:      userQueries,
 		LiveCaseUseCases: liveCaseUseCases,
 		LiveCaseQueries:  liveCaseQueries,
+		ArticleUseCases:  articleUseCases,
+		ArticleQueries:   articleQueries,
 		LiveEngine:       liveEnginePort,
 		EnableSSE:        enableSSE,
 		RateLimiter:      rateLimiter,
@@ -202,7 +238,7 @@ func main() {
 
 	<-stop
 	logger.Info("shutting down servers gracefully...")
-	workerCancel()         // Terminate outbox worker background loop
+	workerCancel()           // Terminate outbox worker background loop
 	grpcServer.GracefulStop() // Stop gRPC server
 	if grpcConn != nil {
 		_ = grpcConn.Close()

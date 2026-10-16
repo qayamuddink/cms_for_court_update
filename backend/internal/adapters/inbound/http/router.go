@@ -21,6 +21,8 @@ type RouterConfig struct {
 	UserQueries      *queries.UserQueries
 	LiveCaseUseCases *commands.LiveCaseUseCases
 	LiveCaseQueries  *queries.LiveCaseQueries
+	ArticleUseCases  *commands.ArticleUseCases
+	ArticleQueries   *queries.ArticleQueries
 	LiveEngine       ports.LiveEnginePort
 	EnableSSE        bool
 	RateLimiter      *IPRateLimiter
@@ -84,6 +86,35 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		mux.HandleFunc("POST /v1/cms/cases/{id}/updates", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsCaseHandler.PublishUpdate))
 		mux.HandleFunc("POST /v1/cms/cases/{id}/updates/{updateId}/correct", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsCaseHandler.CorrectUpdate))
 		mux.HandleFunc("POST /v1/cms/cases/{id}/updates/{updateId}/retract", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsCaseHandler.RetractUpdate))
+	}
+
+	// 5. Articles & Judgments Public endpoints
+	if cfg.ArticleQueries != nil {
+		articlePublicHandler := NewArticlePublicHandler(cfg.ArticleQueries)
+		mux.HandleFunc("GET /v1/articles", articlePublicHandler.ListFeed)
+		mux.HandleFunc("GET /v1/articles/{slug}", articlePublicHandler.GetBySlug)
+		mux.HandleFunc("GET /v1/judgments/{id}", articlePublicHandler.GetJudgment)
+		mux.HandleFunc("GET /v1/cases/{id}/judgment", articlePublicHandler.GetCaseJudgment)
+	}
+
+	// 6. Articles & Judgments CMS endpoints (Staff only)
+	if cfg.ArticleUseCases != nil && cfg.ArticleQueries != nil {
+		cmsArticleHandler := NewCMSArticleHandler(cfg.ArticleUseCases, cfg.ArticleQueries)
+
+		// Articles CRUD and workflow
+		mux.HandleFunc("POST /v1/cms/articles", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.CreateDraft))
+		mux.HandleFunc("GET /v1/cms/articles", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.List))
+		mux.HandleFunc("GET /v1/cms/articles/{id}", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.Get))
+		mux.HandleFunc("PATCH /v1/cms/articles/{id}", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.UpdateDraft))
+		mux.HandleFunc("POST /v1/cms/articles/{id}/submit", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.SubmitForReview))
+		mux.HandleFunc("POST /v1/cms/articles/{id}/send-back", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.SendBack))
+		mux.HandleFunc("POST /v1/cms/articles/{id}/publish", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.Publish))
+		mux.HandleFunc("POST /v1/cms/articles/{id}/archive", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.Archive))
+		mux.HandleFunc("POST /v1/cms/articles/{id}/attachment", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.AttachPDF))
+
+		// Judgments and Upload URLs
+		mux.HandleFunc("POST /v1/cms/judgments", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.CreateJudgment))
+		mux.HandleFunc("POST /v1/cms/uploads/presigned-url", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.RequestUploadURL))
 	}
 
 	// Global middleware chain (outer to inner execution)
