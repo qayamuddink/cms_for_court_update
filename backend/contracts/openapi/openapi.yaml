@@ -1013,6 +1013,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/sections:
+    get:
+      summary: List active sections
+      description: Returns active editorial sections for site navigation and taxonomy filtering.
+      operationId: listPublicSections
+      tags:
+        - Sections
+      responses:
+        '200':
+          description: List of active taxonomy sections
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionListResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/sections/{slug}:
+    get:
+      summary: Get section by slug
+      description: Retrieves section details by slug.
+      operationId: getPublicSectionBySlug
+      tags:
+        - Sections
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Section details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Section'
+        '404':
+          description: Section not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/top-stories:
+    get:
+      summary: Get top pinned stories
+      description: Returns pinned top stories in editorial display order.
+      operationId: listTopStories
+      tags:
+        - Articles
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Pinned top stories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ArticleFeedItem'
+
   /v1/articles:
     get:
       summary: Get published articles feed
@@ -1026,12 +1100,27 @@ paths:
           description: Filter by article type
           schema:
             type: string
-            enum: [news, commentary, editorial, judgment_summary]
+            enum: [news, commentary, editorial, judgment_summary, top_story, column, opinion, interview, round_up, digest, know_the_law, book_review, job_update, event, video, cartoon]
         - name: category
           in: query
           description: Filter by legal category
           schema:
             type: string
+        - name: section_slug
+          in: query
+          description: Filter by taxonomy section slug
+          schema:
+            type: string
+        - name: section_id
+          in: query
+          description: Filter by taxonomy section UUID
+          schema:
+            type: string
+        - name: is_top_story
+          in: query
+          description: Filter pinned top stories only
+          schema:
+            type: boolean
         - name: tag
           in: query
           description: Filter by keyword tag
@@ -1088,6 +1177,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ArticleDetail'
+        '301':
+          description: Article moved permanently to new slug
+          headers:
+            Location:
+              description: Target URL of the new slug
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect_url:
+                    type: string
+                  old_slug:
+                    type: string
+                  new_slug:
+                    type: string
         '404':
           description: Article not found
           content:
@@ -1100,6 +1207,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/articles/{id}/related:
+    get:
+      summary: Get related articles
+      description: Returns related articles for an article by explicit relationships or section fallbacks.
+      operationId: getRelatedArticles
+      tags:
+        - Articles
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5
+      responses:
+        '200':
+          description: Related articles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  articles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ArticleFeedItem'
 
   /v1/judgments/{id}:
     get:
@@ -1334,6 +1472,310 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      summary: Soft-delete article (Editor/Admin only)
+      description: Marks an article as deleted without physically removing data.
+      operationId: deleteCMSArticle
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article soft-deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+        '404':
+          description: Article not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}/schedule:
+    post:
+      summary: Schedule article publication (Editor/Admin only)
+      description: Sets article to scheduled status with a future publication timestamp.
+      operationId: scheduleCMSArticle
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleArticlePayload'
+      responses:
+        '200':
+          description: Article scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          description: Invalid scheduled time or validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}/restore:
+    post:
+      summary: Restore soft-deleted article (Editor/Admin only)
+      description: Restores a soft-deleted article back to active status.
+      operationId: restoreCMSArticle
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article restored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: restored
+
+  /v1/cms/articles/{id}/revisions:
+    get:
+      summary: List article revisions
+      description: Returns list of historical revisions for diff inspection.
+      operationId: listCMSArticleRevisions
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Revisions list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleRevisionListResponse'
+
+  /v1/cms/articles/{id}/revisions/{version}:
+    get:
+      summary: Get revision by version
+      description: Retrieves complete revision body blocks for side-by-side diff.
+      operationId: getCMSArticleRevision
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Article revision snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleRevision'
+        '404':
+          description: Revision not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/articles/{id}/revisions/{version}/restore:
+    post:
+      summary: Restore draft to revision (Editor/Admin only)
+      description: Restores draft title, subtitle, summary, and body to selected revision.
+      operationId: restoreCMSArticleRevision
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Draft restored to revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+
+  /v1/cms/top-stories:
+    put:
+      summary: Update pinned top stories order (Editor/Admin only)
+      description: Updates ordering and pin status for top stories.
+      operationId: updateCMSTopStories
+      tags:
+        - CMS Articles
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TopStoriesOrderPayload'
+      responses:
+        '200':
+          description: Top stories order updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: updated
+
+  /v1/cms/sections:
+    get:
+      summary: List all sections (CMS)
+      description: Returns all taxonomy sections for administration.
+      operationId: listCMSSections
+      tags:
+        - CMS Sections
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Sections list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionListResponse'
+    post:
+      summary: Create taxonomy section (Editor/Admin only)
+      description: Creates a new editorial section.
+      operationId: createCMSSection
+      tags:
+        - CMS Sections
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSectionRequest'
+      responses:
+        '201':
+          description: Section created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Section'
+        '409':
+          description: Slug conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/sections/{id}:
+    put:
+      summary: Update taxonomy section (Editor/Admin only)
+      description: Updates an existing taxonomy section.
+      operationId: updateCMSSection
+      tags:
+        - CMS Sections
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSectionRequest'
+      responses:
+        '200':
+          description: Section updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Section'
+    delete:
+      summary: Delete taxonomy section (Admin only)
+      description: Deletes a taxonomy section.
+      operationId: deleteCMSSection
+      tags:
+        - CMS Sections
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Section deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
 
   /v1/cms/articles/{id}/submit:
     post:
@@ -2475,13 +2917,13 @@ components:
             type: object
         article_type:
           type: string
-          enum: [news, commentary, editorial, judgment_summary]
+          enum: [news, commentary, editorial, judgment_summary, top_story, column, opinion, interview, round_up, digest, know_the_law, book_review, job_update, event, video, cartoon]
         access_level:
           type: string
           enum: [free, premium]
         status:
           type: string
-          enum: [draft, in_review, published, archived]
+          enum: [draft, in_review, scheduled, published, archived]
         author_id:
           type: string
         editor_id:
@@ -2490,6 +2932,37 @@ components:
           type: string
         category:
           type: string
+        section_id:
+          type: string
+        section_name:
+          type: string
+        section_slug:
+          type: string
+        featured_image_key:
+          type: string
+        featured_image_alt:
+          type: string
+        featured_image_caption:
+          type: string
+        word_count:
+          type: integer
+        reading_time_minutes:
+          type: integer
+        meta_title:
+          type: string
+        meta_description:
+          type: string
+        canonical_url:
+          type: string
+        social_image_key:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        is_pinned_top_story:
+          type: boolean
+        top_story_priority:
+          type: integer
         tags:
           type: array
           items:
@@ -2504,6 +2977,21 @@ components:
           type: integer
         pdf_checksum:
           type: string
+        related_article_ids:
+          type: array
+          items:
+            type: string
+        related_case_ids:
+          type: array
+          items:
+            type: string
+        related_judgment_ids:
+          type: array
+          items:
+            type: string
+        deleted_at:
+          type: string
+          format: date-time
         published_at:
           type: string
           format: date-time
@@ -2541,12 +3029,24 @@ components:
           type: string
         article_type:
           type: string
-          enum: [news, commentary, editorial, judgment_summary]
+          enum: [news, commentary, editorial, judgment_summary, top_story, column, opinion, interview, round_up, digest, know_the_law, book_review, job_update, event, video, cartoon]
         access_level:
           type: string
           enum: [free, premium]
         category:
           type: string
+        section_id:
+          type: string
+        section_name:
+          type: string
+        section_slug:
+          type: string
+        featured_image_key:
+          type: string
+        is_pinned_top_story:
+          type: boolean
+        word_count:
+          type: integer
         tags:
           type: array
           items:
@@ -2608,17 +3108,48 @@ components:
             type: object
         article_type:
           type: string
-          enum: [news, commentary, editorial, judgment_summary]
+          enum: [news, commentary, editorial, judgment_summary, top_story, column, opinion, interview, round_up, digest, know_the_law, book_review, job_update, event, video, cartoon]
         access_level:
           type: string
           enum: [free, premium]
         status:
           type: string
-          enum: [draft, in_review, published, archived]
+          enum: [draft, in_review, scheduled, published, archived]
         author_id:
           type: string
         category:
           type: string
+        section_id:
+          type: string
+        section_name:
+          type: string
+        section_slug:
+          type: string
+        featured_image_key:
+          type: string
+        featured_image_alt:
+          type: string
+        featured_image_caption:
+          type: string
+        word_count:
+          type: integer
+        outline:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutlineItem'
+        meta_title:
+          type: string
+        meta_description:
+          type: string
+        canonical_url:
+          type: string
+        social_image_key:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        is_pinned_top_story:
+          type: boolean
         tags:
           type: array
           items:
@@ -2639,6 +3170,18 @@ components:
           type: boolean
         reading_time_minutes:
           type: integer
+        related_articles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArticleFeedItem'
+        related_case_ids:
+          type: array
+          items:
+            type: string
+        related_judgment_ids:
+          type: array
+          items:
+            type: string
         published_at:
           type: string
           format: date-time
@@ -2721,13 +3264,29 @@ components:
             type: object
         article_type:
           type: string
-          enum: [news, commentary, editorial, judgment_summary]
+          enum: [news, commentary, editorial, judgment_summary, top_story, column, opinion, interview, round_up, digest, know_the_law, book_review, job_update, event, video, cartoon]
           default: news
         access_level:
           type: string
           enum: [free, premium]
           default: free
         category:
+          type: string
+        section_id:
+          type: string
+        featured_image_key:
+          type: string
+        featured_image_alt:
+          type: string
+        featured_image_caption:
+          type: string
+        meta_title:
+          type: string
+        meta_description:
+          type: string
+        canonical_url:
+          type: string
+        social_image_key:
           type: string
         tags:
           type: array
@@ -2739,6 +3298,18 @@ components:
           type: string
         citation:
           type: string
+        related_article_ids:
+          type: array
+          items:
+            type: string
+        related_case_ids:
+          type: array
+          items:
+            type: string
+        related_judgment_ids:
+          type: array
+          items:
+            type: string
 
     UpdateArticleDraftRequest:
       type: object
@@ -2763,11 +3334,27 @@ components:
             type: object
         article_type:
           type: string
-          enum: [news, commentary, editorial, judgment_summary]
+          enum: [news, commentary, editorial, judgment_summary, top_story, column, opinion, interview, round_up, digest, know_the_law, book_review, job_update, event, video, cartoon]
         access_level:
           type: string
           enum: [free, premium]
         category:
+          type: string
+        section_id:
+          type: string
+        featured_image_key:
+          type: string
+        featured_image_alt:
+          type: string
+        featured_image_caption:
+          type: string
+        meta_title:
+          type: string
+        meta_description:
+          type: string
+        canonical_url:
+          type: string
+        social_image_key:
           type: string
         tags:
           type: array
@@ -2779,6 +3366,18 @@ components:
           type: string
         citation:
           type: string
+        related_article_ids:
+          type: array
+          items:
+            type: string
+        related_case_ids:
+          type: array
+          items:
+            type: string
+        related_judgment_ids:
+          type: array
+          items:
+            type: string
 
     SendBackRequest:
       type: object
@@ -3028,5 +3627,188 @@ components:
           enum: [ios, android, web]
         push_token:
           type: string
+
+    OutlineItem:
+      type: object
+      required:
+        - title
+        - level
+        - slug
+      properties:
+        title:
+          type: string
+        level:
+          type: integer
+        slug:
+          type: string
+
+    Section:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+        - section_type
+        - is_active
+        - sort_order
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        section_type:
+          type: string
+          enum: [court, topic, edition]
+        parent_id:
+          type: string
+        is_active:
+          type: boolean
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SectionListResponse:
+      type: object
+      required:
+        - sections
+      properties:
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Section'
+
+    CreateSectionRequest:
+      type: object
+      required:
+        - name
+        - slug
+        - section_type
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        section_type:
+          type: string
+          enum: [court, topic, edition]
+        parent_id:
+          type: string
+        is_active:
+          type: boolean
+        sort_order:
+          type: integer
+
+    UpdateSectionRequest:
+      type: object
+      required:
+        - name
+        - slug
+        - section_type
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        section_type:
+          type: string
+          enum: [court, topic, edition]
+        parent_id:
+          type: string
+        is_active:
+          type: boolean
+        sort_order:
+          type: integer
+
+    ArticleRevision:
+      type: object
+      required:
+        - id
+        - article_id
+        - version
+        - title
+        - summary
+        - created_by
+        - created_at
+      properties:
+        id:
+          type: string
+        article_id:
+          type: string
+        version:
+          type: integer
+        title:
+          type: string
+        subtitle:
+          type: string
+        summary:
+          type: string
+        body_blocks:
+          type: array
+          items:
+            type: object
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ArticleRevisionListResponse:
+      type: object
+      required:
+        - revisions
+      properties:
+        revisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArticleRevision'
+
+    TopStoryOrderItem:
+      type: object
+      required:
+        - article_id
+        - priority
+        - is_pinned
+      properties:
+        article_id:
+          type: string
+        priority:
+          type: integer
+        is_pinned:
+          type: boolean
+
+    TopStoriesOrderPayload:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopStoryOrderItem'
+
+    ScheduleArticlePayload:
+      type: object
+      required:
+        - scheduled_at
+      properties:
+        scheduled_at:
+          type: string
+          format: date-time
+
 
 

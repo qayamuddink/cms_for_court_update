@@ -13,23 +13,24 @@ import (
 
 // RouterConfig holds all dependencies required to build the HTTP router.
 type RouterConfig struct {
-	Logger           *slog.Logger
-	DBHealthChecker  ports.DBHealthChecker
-	Clock            ports.Clock
-	TokenService     ports.TokenService
-	AuthUseCases     *commands.AuthUseCases
-	UserQueries      *queries.UserQueries
-	LiveCaseUseCases *commands.LiveCaseUseCases
-	LiveCaseQueries       *queries.LiveCaseQueries
-	ArticleUseCases       *commands.ArticleUseCases
-	ArticleQueries        *queries.ArticleQueries
-	SubscriptionUseCases  *commands.SubscriptionUseCases
-	SubscriptionQueries   *queries.SubscriptionQueries
-	FollowUseCases        *commands.FollowUseCases
-	FollowQueries         *queries.FollowQueries
-	LiveEngine            ports.LiveEnginePort
-	EnableSSE             bool
-	RateLimiter           *IPRateLimiter
+	Logger               *slog.Logger
+	DBHealthChecker      ports.DBHealthChecker
+	Clock                ports.Clock
+	TokenService         ports.TokenService
+	AuthUseCases         *commands.AuthUseCases
+	UserQueries          *queries.UserQueries
+	LiveCaseUseCases     *commands.LiveCaseUseCases
+	LiveCaseQueries      *queries.LiveCaseQueries
+	ArticleUseCases      *commands.ArticleUseCases
+	ArticleQueries       *queries.ArticleQueries
+	SectionUseCases      *commands.SectionUseCases
+	SubscriptionUseCases *commands.SubscriptionUseCases
+	SubscriptionQueries  *queries.SubscriptionQueries
+	FollowUseCases       *commands.FollowUseCases
+	FollowQueries        *queries.FollowQueries
+	LiveEngine           ports.LiveEnginePort
+	EnableSSE            bool
+	RateLimiter          *IPRateLimiter
 }
 
 // NewRouter builds the HTTP handler with all routes, rate limiters, and middlewares.
@@ -92,16 +93,30 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		mux.HandleFunc("POST /v1/cms/cases/{id}/updates/{updateId}/retract", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsCaseHandler.RetractUpdate))
 	}
 
-	// 5. Articles & Judgments Public endpoints
+	// 5. Taxonomy Sections Public & CMS endpoints
+	if cfg.SectionUseCases != nil {
+		sectionHandler := NewSectionHandler(cfg.SectionUseCases)
+		mux.HandleFunc("GET /v1/sections", sectionHandler.ListPublic)
+		mux.HandleFunc("GET /v1/sections/{slug}", sectionHandler.GetBySlug)
+
+		mux.HandleFunc("GET /v1/cms/sections", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(sectionHandler.ListCMS))
+		mux.HandleFunc("POST /v1/cms/sections", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(sectionHandler.Create))
+		mux.HandleFunc("PUT /v1/cms/sections/{id}", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(sectionHandler.Update))
+		mux.HandleFunc("DELETE /v1/cms/sections/{id}", RequireRoles(identity.RoleAdmin)(sectionHandler.Delete))
+	}
+
+	// 6. Articles & Judgments Public endpoints
 	if cfg.ArticleQueries != nil {
 		articlePublicHandler := NewArticlePublicHandler(cfg.ArticleQueries)
 		mux.HandleFunc("GET /v1/articles", articlePublicHandler.ListFeed)
 		mux.HandleFunc("GET /v1/articles/{slug}", articlePublicHandler.GetBySlug)
+		mux.HandleFunc("GET /v1/articles/{id}/related", articlePublicHandler.GetRelated)
+		mux.HandleFunc("GET /v1/top-stories", articlePublicHandler.ListTopStories)
 		mux.HandleFunc("GET /v1/judgments/{id}", articlePublicHandler.GetJudgment)
 		mux.HandleFunc("GET /v1/cases/{id}/judgment", articlePublicHandler.GetCaseJudgment)
 	}
 
-	// 6. Articles & Judgments CMS endpoints (Staff only)
+	// 7. Articles & Judgments CMS endpoints (Staff only)
 	if cfg.ArticleUseCases != nil && cfg.ArticleQueries != nil {
 		cmsArticleHandler := NewCMSArticleHandler(cfg.ArticleUseCases, cfg.ArticleQueries)
 
@@ -116,12 +131,21 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		mux.HandleFunc("POST /v1/cms/articles/{id}/archive", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.Archive))
 		mux.HandleFunc("POST /v1/cms/articles/{id}/attachment", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.AttachPDF))
 
+		// Phase 9: Scheduling, Soft-delete, Restore, Revisions & Top Stories
+		mux.HandleFunc("POST /v1/cms/articles/{id}/schedule", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.Schedule))
+		mux.HandleFunc("DELETE /v1/cms/articles/{id}", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.SoftDelete))
+		mux.HandleFunc("POST /v1/cms/articles/{id}/restore", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.Restore))
+		mux.HandleFunc("GET /v1/cms/articles/{id}/revisions", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.ListRevisions))
+		mux.HandleFunc("GET /v1/cms/articles/{id}/revisions/{version}", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.GetRevision))
+		mux.HandleFunc("POST /v1/cms/articles/{id}/revisions/{version}/restore", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.RestoreRevision))
+		mux.HandleFunc("PUT /v1/cms/top-stories", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.UpdateTopStories))
+
 		// Judgments and Upload URLs
-		mux.HandleFunc("POST /v1/cms/judgments", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.CreateJudgment))
-		mux.HandleFunc("POST /v1/cms/uploads/presigned-url", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.RequestUploadURL))
+		mux.HandleFunc("POST /v1/cms/judgments", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.CreateJudgmentSummary))
+		mux.HandleFunc("POST /v1/cms/uploads/presigned-url", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.PresignUpload))
 	}
 
-	// 7. Subscriptions & Payment Webhooks
+	// 8. Subscriptions & Payment Webhooks
 	if cfg.SubscriptionUseCases != nil {
 		webhookHandler := NewPaymentWebhookHandler(cfg.SubscriptionUseCases)
 		mux.HandleFunc("POST /v1/webhooks/payments", webhookHandler.HandleWebhook)
@@ -139,15 +163,15 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		mux.HandleFunc("POST /v1/cms/subscriptions/{id}/cancel", RequireRoles(identity.RoleAdmin)(cmsSubHandler.CancelSubscription))
 	}
 
-	// 8. Case Follows & Devices
+	// 9. Case Follows & Push Device Registration
 	if cfg.FollowUseCases != nil && cfg.FollowQueries != nil {
 		followHandler := NewFollowHandler(cfg.FollowUseCases, cfg.FollowQueries)
 		mux.HandleFunc("POST /v1/cases/{id}/follow", RequireAuth(followHandler.FollowCase))
 		mux.HandleFunc("DELETE /v1/cases/{id}/follow", RequireAuth(followHandler.UnfollowCase))
 		mux.HandleFunc("GET /v1/cases/{id}/follow", followHandler.GetCaseFollowStatus)
-
 		mux.HandleFunc("POST /v1/devices", RequireAuth(followHandler.RegisterDevice))
 		mux.HandleFunc("DELETE /v1/devices", RequireAuth(followHandler.UnregisterDevice))
+		mux.HandleFunc("POST /v1/devices/register", RequireAuth(followHandler.RegisterDevice))
 	}
 
 	// Global middleware chain (outer to inner execution)

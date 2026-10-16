@@ -183,6 +183,7 @@ func main() {
 	pushDispatcher := commands.NewPushDispatcher(caseFollowRepo, deviceTokenRepo, caseRepo, pushSender, logger)
 	eventPublisher := liveengine.NewLogEventPublisher(logger)
 	compositePublisher := commands.NewCompositeEventPublisher(eventPublisher, pushDispatcher)
+	sectionRepo := postgres.NewSQLSectionRepository(db)
 	articleRepo := postgres.NewSQLArticleRepository(db)
 	entitlementChecker := entitlement.NewSQLSubscriptionChecker(db, userRepo)
 
@@ -202,13 +203,18 @@ func main() {
 	outboxWorker := postgres.NewOutboxWorker(outboxRepo, compositePublisher, 200*time.Millisecond, clock, logger)
 	go outboxWorker.Start(workerCtx)
 
+	// Start Scheduled Publisher Worker in background
+	scheduledPublisher := commands.NewScheduledPublisherWorker(articleRepo, clock, 10*time.Second)
+	scheduledPublisher.Start(workerCtx)
+
 	// Wire application use cases (domain and use cases NEVER change between modes!)
 	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock, subRepo)
 	userQueries := queries.NewUserQueries(userRepo)
 	liveCaseUseCases := commands.NewLiveCaseUseCases(caseRepo, updateRepo, assignmentRepo, outboxRepo, txMgr, liveEnginePort, userRepo, idGenerator, clock)
 	liveCaseQueries := queries.NewLiveCaseQueries(caseRepo, updateRepo, assignmentRepo)
+	sectionUseCases := commands.NewSectionUseCases(sectionRepo, idGenerator, clock)
 	articleUseCases := commands.NewArticleUseCases(articleRepo, idGenerator, clock, fileStore)
-	articleQueries := queries.NewArticleQueries(articleRepo, entitlementChecker, fileStore)
+	articleQueries := queries.NewArticleQueries(articleRepo, sectionRepo, entitlementChecker, fileStore)
 	subUseCases := commands.NewSubscriptionUseCases(subRepo, userRepo, paymentGateway, idGenerator, clock)
 	subQueries := queries.NewSubscriptionQueries(subRepo)
 	followUseCases := commands.NewFollowUseCases(caseFollowRepo, deviceTokenRepo, caseRepo, idGenerator, clock)
@@ -225,6 +231,7 @@ func main() {
 		UserQueries:          userQueries,
 		LiveCaseUseCases:     liveCaseUseCases,
 		LiveCaseQueries:      liveCaseQueries,
+		SectionUseCases:      sectionUseCases,
 		ArticleUseCases:      articleUseCases,
 		ArticleQueries:       articleQueries,
 		SubscriptionUseCases: subUseCases,

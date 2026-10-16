@@ -105,9 +105,10 @@ func setupSubTestEnv(t *testing.T) *subTestEnv {
 	pushDispatcher := commands.NewPushDispatcher(caseFollowRepo, deviceTokenRepo, caseRepo, pushSender, logger)
 	entitlementChecker := entitlement.NewSQLSubscriptionChecker(db, userRepo)
 
+	sectionRepo := postgres.NewSQLSectionRepository(db)
 	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock, subRepo)
 	userQueries := queries.NewUserQueries(userRepo)
-	articleQueries := queries.NewArticleQueries(articleRepo, entitlementChecker, nil)
+	articleQueries := queries.NewArticleQueries(articleRepo, sectionRepo, entitlementChecker, nil)
 	subUseCases := commands.NewSubscriptionUseCases(subRepo, userRepo, paymentGateway, idGenerator, clock)
 	subQueries := queries.NewSubscriptionQueries(subRepo)
 	followUseCases := commands.NewFollowUseCases(caseFollowRepo, deviceTokenRepo, caseRepo, idGenerator, clock)

@@ -34,6 +34,7 @@ export default function TipTapEditor({
   readOnly = false,
 }: TipTapEditorProps) {
   const editor = useEditor({
+    immediatelyRender: false,
     extensions: [
       StarterKit.configure({
         heading: {
@@ -50,7 +51,12 @@ export default function TipTapEditor({
         placeholder,
       }),
     ],
-    content: content || '',
+    content:
+      Array.isArray(content) && content.length === 0
+        ? ''
+        : Array.isArray(content)
+        ? { type: 'doc', content }
+        : content || '',
     editable: !readOnly,
     onUpdate: ({ editor }) => {
       if (onChange) {

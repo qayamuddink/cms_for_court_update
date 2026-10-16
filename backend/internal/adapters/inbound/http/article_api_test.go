@@ -98,14 +98,16 @@ func setupArticleTestEnv(t *testing.T) *articleTestEnv {
 	}
 	_ = fileStore.EnsureBucket(ctx)
 
+	sectionRepo := postgres.NewSQLSectionRepository(db)
 	articleRepo := postgres.NewSQLArticleRepository(db)
 	caseRepo := postgres.NewSQLCourtCaseRepository(db)
 	entitlementChecker := entitlement.NewSQLSubscriptionChecker(db, userRepo)
 
 	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock)
 	userQueries := queries.NewUserQueries(userRepo)
+	sectionUseCases := commands.NewSectionUseCases(sectionRepo, idGenerator, clock)
 	articleUseCases := commands.NewArticleUseCases(articleRepo, idGenerator, clock, fileStore)
-	articleQueries := queries.NewArticleQueries(articleRepo, entitlementChecker, fileStore)
+	articleQueries := queries.NewArticleQueries(articleRepo, sectionRepo, entitlementChecker, fileStore)
 	liveCaseQueries := queries.NewLiveCaseQueries(caseRepo, nil, nil)
 	liveCaseUseCases := commands.NewLiveCaseUseCases(caseRepo, nil, nil, nil, nil, nil, userRepo, idGenerator, clock)
 
@@ -118,6 +120,7 @@ func setupArticleTestEnv(t *testing.T) *articleTestEnv {
 		UserQueries:      userQueries,
 		LiveCaseUseCases: liveCaseUseCases,
 		LiveCaseQueries:  liveCaseQueries,
+		SectionUseCases:  sectionUseCases,
 		ArticleUseCases:  articleUseCases,
 		ArticleQueries:   articleQueries,
 	})
@@ -602,3 +605,449 @@ func TestJudgment_CreateAndEndToEndPublicAccess(t *testing.T) {
 		t.Errorf("expected free article to not be locked")
 	}
 }
+
+func TestPhase9_Sections_CRUD_And_Filtering(t *testing.T) {
+	env := setupArticleTestEnv(t)
+
+	// 1. Public list sections
+	req := httptest.NewRequest(http.MethodGet, "/v1/sections", nil)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on /v1/sections, got %d", w.Code)
+	}
+
+	var secList struct {
+		Sections []content.Section `json:"sections"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &secList)
+	if len(secList.Sections) < 10 {
+		t.Fatalf("expected at least 10 seeded sections, got %d", len(secList.Sections))
+	}
+
+	// 2. CMS create new section
+	createSecPayload := []byte(`{
+		"name": "Commercial Courts",
+		"slug": "commercial-courts",
+		"description": "Commercial dispute resolution benches",
+		"display_order": 110,
+		"is_active": true
+	}`)
+	req = httptest.NewRequest(http.MethodPost, "/v1/cms/sections", bytes.NewReader(createSecPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for section, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var createdSec content.Section
+	_ = json.Unmarshal(w.Body.Bytes(), &createdSec)
+	if createdSec.Slug != "commercial-courts" {
+		t.Errorf("expected slug 'commercial-courts', got %s", createdSec.Slug)
+	}
+
+	// 3. Update section
+	updateSecPayload := []byte(`{
+		"name": "Commercial & Admiralty Courts",
+		"slug": "commercial-admiralty-courts",
+		"description": "Updated description",
+		"display_order": 115,
+		"is_active": true
+	}`)
+	req = httptest.NewRequest(http.MethodPut, "/v1/cms/sections/"+createdSec.ID, bytes.NewReader(updateSecPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK updating section, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 4. Delete section (Admin only)
+	req = httptest.NewRequest(http.MethodDelete, "/v1/cms/sections/"+createdSec.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+env.adminToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK deleting section, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPhase9_LongArticle_Revisions_Redirects_And_Scheduling(t *testing.T) {
+	env := setupArticleTestEnv(t)
+
+	// 1. Create a long illustrated article with headings
+	bodyBlocks := []map[string]any{
+		{
+			"type": "heading",
+			"attrs": map[string]any{"level": 2},
+			"content": []any{map[string]any{"type": "text", "text": "1. Factual Matrix of the Case"}},
+		},
+		{
+			"type": "paragraph",
+			"content": []any{
+				map[string]any{"type": "text", "text": strings.Repeat("detailed legal arguments constitutional questions bench observations statutory provisions ", 20)},
+			},
+		},
+		{
+			"type": "heading",
+			"attrs": map[string]any{"level": 2},
+			"content": []any{map[string]any{"type": "text", "text": "2. High Court Conflicting Interpretations"}},
+		},
+		{
+			"type": "paragraph",
+			"content": []any{
+				map[string]any{"type": "text", "text": strings.Repeat("doctrine of basic structure judicial review precedents overruled ", 20)},
+			},
+		},
+	}
+	bodyJSON, _ := json.Marshal(bodyBlocks)
+
+	articlePayload := map[string]any{
+		"title":                  "Landmark Constitutional Bench Judgment on Article 19",
+		"summary":                "Comprehensive analysis of speech freedoms and reasonable restrictions.",
+		"body_blocks":            json.RawMessage(bodyJSON),
+		"article_type":           "column",
+		"access_level":           "free",
+		"category":               "Constitutional Law",
+		"primary_section_id":     "0192e240-0000-7000-8000-000000000001", // Supreme Court
+		"featured_image_key":     "images/2026/01/sc-bench.jpg",
+		"featured_image_caption": "Supreme Court of India Courtroom 1",
+		"meta_title":             "Article 19 Landmark Ruling Analysis",
+		"meta_description":       "Full in-depth analysis of the 5-judge bench decision.",
+		"tags":                   []string{"article-19", "free-speech", "constitution"},
+	}
+	payloadBytes, _ := json.Marshal(articlePayload)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/cms/articles", bytes.NewReader(payloadBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for long article, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created content.Article
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	if created.WordCount == 0 {
+		t.Errorf("expected word count to be calculated, got 0")
+	}
+	if created.ReadingTimeMinutes < 1 {
+		t.Errorf("expected reading time >= 1, got %d", created.ReadingTimeMinutes)
+	}
+
+	// 2. Test revision snapshot on update
+	updatePayload := map[string]any{
+		"expected_version": created.Version,
+		"title":            "Landmark Supreme Court Ruling on Article 19 Free Speech",
+		"summary":          "Updated summary with refined jurisprudential critique.",
+		"body_blocks":      json.RawMessage(bodyJSON),
+		"article_type":     "column",
+		"access_level":     "free",
+		"category":         "Constitutional Law",
+	}
+	upBytes, _ := json.Marshal(updatePayload)
+	req = httptest.NewRequest(http.MethodPatch, "/v1/cms/articles/"+created.ID, bytes.NewReader(upBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK updating article, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 3. Check revisions list
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/cms/articles/%s/revisions", created.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on revisions list, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var revList struct {
+		Revisions []content.ArticleRevision `json:"revisions"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &revList)
+	if len(revList.Revisions) == 0 {
+		t.Fatalf("expected at least 1 revision snapshot")
+	}
+	if revList.Revisions[0].Version != 1 {
+		t.Errorf("expected revision version 1, got %d", revList.Revisions[0].Version)
+	}
+
+	// 4. Test revision restore
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/cms/articles/%s/revisions/1/restore", created.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK restoring revision, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 5. Publish article
+	pubReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/cms/articles/%s/publish", created.ID), nil)
+	pubReq.Header.Set("Authorization", "Bearer "+env.editorToken)
+	pw := httptest.NewRecorder()
+	env.router.ServeHTTP(pw, pubReq)
+	if pw.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK publishing article, got %d: %s", pw.Code, pw.Body.String())
+	}
+
+	// 6. Test 301 Redirect from old slug
+	// Old slug was "landmark-constitutional-bench-judgment-on-article-19"
+	// Current slug is "landmark-supreme-court-ruling-on-article-19-free-speech"
+	oldSlug := "landmark-constitutional-bench-judgment-on-article-19"
+	req = httptest.NewRequest(http.MethodGet, "/v1/articles/"+oldSlug, nil)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusMovedPermanently {
+		t.Fatalf("expected 301 Moved Permanently for old slug redirect, got %d: %s", w.Code, w.Body.String())
+	}
+	location := w.Header().Get("Location")
+	if !strings.Contains(location, "/v1/articles/") {
+		t.Errorf("expected Location header with target slug, got: %s", location)
+	}
+
+	// 7. Verify public article detail response contains outline & reading time
+	var pubArt content.Article
+	_ = json.Unmarshal(pw.Body.Bytes(), &pubArt)
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/articles/"+pubArt.Slug, nil)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on active article slug, got %d", w.Code)
+	}
+
+	var detail queries.ArticleDetailResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &detail)
+	if len(detail.Outline) != 2 {
+		t.Errorf("expected 2 outline items, got %d", len(detail.Outline))
+	}
+	if detail.Outline[0].Text != "1. Factual Matrix of the Case" {
+		t.Errorf("unexpected outline heading: %s", detail.Outline[0].Text)
+	}
+
+	// 8. Soft Delete and Restore
+	req = httptest.NewRequest(http.MethodDelete, "/v1/cms/articles/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK soft deleting article, got %d", w.Code)
+	}
+
+	// Public access should now be 404
+	req = httptest.NewRequest(http.MethodGet, "/v1/articles/"+pubArt.Slug, nil)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for soft-deleted article, got %d", w.Code)
+	}
+
+	// Restore
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/cms/articles/%s/restore", created.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK restoring article, got %d", w.Code)
+	}
+
+	// Public access should now be 200 OK again
+	req = httptest.NewRequest(http.MethodGet, "/v1/articles/"+pubArt.Slug, nil)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for restored article, got %d", w.Code)
+	}
+}
+
+func TestPhase9_ScheduledPublishWorker_Execution(t *testing.T) {
+	env := setupArticleTestEnv(t)
+
+	// 1. Create a draft article
+	articlePayload := map[string]any{
+		"title":        "Scheduled Future Decision on Telecommunications Bill",
+		"summary":      "A high-stakes regulatory challenge scheduled for tomorrow.",
+		"article_type": "news",
+		"access_level": "free",
+		"category":     "Telecom",
+	}
+	payloadBytes, _ := json.Marshal(articlePayload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/cms/articles", bytes.NewReader(payloadBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", w.Code)
+	}
+
+	var created content.Article
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+
+	// 2. Schedule for 1 hour ago (past time simulates arrival of scheduled time)
+	pastScheduledTime := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	// Direct repository update or worker check
+	parsedTime, _ := time.Parse(time.RFC3339, pastScheduledTime)
+	created.Status = content.StatusScheduled
+	created.ScheduledAt = &parsedTime
+	_ = env.db.QueryRow(`
+		UPDATE articles SET status = 'scheduled', scheduled_at = $1 WHERE id = $2 RETURNING id;
+	`, parsedTime, created.ID)
+
+	// 3. Run worker processing
+	worker := commands.NewScheduledPublisherWorker(postgres.NewSQLArticleRepository(env.db), ports.RealClock{}, 10*time.Second)
+	publishedCount, err := worker.ProcessDueScheduledArticles(context.Background())
+	if err != nil {
+		t.Fatalf("failed processing due scheduled articles: %v", err)
+	}
+	if publishedCount < 1 {
+		t.Errorf("expected at least 1 article published by worker, got %d", publishedCount)
+	}
+
+	// 4. Verify public slug endpoint now returns published article
+	req = httptest.NewRequest(http.MethodGet, "/v1/articles/"+created.Slug, nil)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK after scheduled publishing, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPhase9_SectionFeed_KeysetPagination(t *testing.T) {
+	env := setupArticleTestEnv(t)
+	taxSectionID := "0192e240-0000-7000-8000-000000000005" // Tax section from migration 11
+
+	// Create 3 published articles in Tax section
+	for i := 1; i <= 3; i++ {
+		articlePayload := map[string]any{
+			"title":              fmt.Sprintf("Taxation Tribunal Ruling Part %d", i),
+			"summary":            fmt.Sprintf("Summary of tax tribunal ruling %d", i),
+			"article_type":       "news",
+			"access_level":       "free",
+			"category":           "Taxation Law",
+			"primary_section_id": taxSectionID,
+		}
+		pBytes, _ := json.Marshal(articlePayload)
+		req := httptest.NewRequest(http.MethodPost, "/v1/cms/articles", bytes.NewReader(pBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+env.editorToken)
+		w := httptest.NewRecorder()
+		env.router.ServeHTTP(w, req)
+
+		var art content.Article
+		_ = json.Unmarshal(w.Body.Bytes(), &art)
+
+		// Publish
+		pubReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/cms/articles/%s/publish", art.ID), nil)
+		pubReq.Header.Set("Authorization", "Bearer "+env.editorToken)
+		pw := httptest.NewRecorder()
+		env.router.ServeHTTP(pw, pubReq)
+	}
+
+	// Query feed filtered by section_slug=tax with limit=2
+	req := httptest.NewRequest(http.MethodGet, "/v1/articles?section_slug=tax&limit=2", nil)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on section feed, got %d", w.Code)
+	}
+
+	var page1 queries.FeedResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &page1)
+	if len(page1.Articles) != 2 {
+		t.Errorf("expected 2 articles on page 1, got %d", len(page1.Articles))
+	}
+	if page1.NextCursor == nil {
+		t.Fatalf("expected next_cursor for keyset pagination")
+	}
+
+	// Query page 2 with cursor
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/articles?section_slug=tax&limit=2&cursor=%s", *page1.NextCursor), nil)
+	w2 := httptest.NewRecorder()
+	env.router.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on page 2, got %d", w2.Code)
+	}
+
+	var page2 queries.FeedResponse
+	_ = json.Unmarshal(w2.Body.Bytes(), &page2)
+	if len(page2.Articles) < 1 {
+		t.Errorf("expected at least 1 article on page 2, got %d", len(page2.Articles))
+	}
+}
+
+func TestPhase9_TopStories_Ordering(t *testing.T) {
+	env := setupArticleTestEnv(t)
+
+	// Create and publish 2 articles
+	var ids []string
+	for i := 1; i <= 2; i++ {
+		articlePayload := map[string]any{
+			"title":        fmt.Sprintf("Top Story Candidate %d", i),
+			"summary":      fmt.Sprintf("Summary of candidate %d", i),
+			"article_type": "top_story",
+			"access_level": "free",
+			"category":     "Breaking",
+		}
+		pBytes, _ := json.Marshal(articlePayload)
+		req := httptest.NewRequest(http.MethodPost, "/v1/cms/articles", bytes.NewReader(pBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+env.editorToken)
+		w := httptest.NewRecorder()
+		env.router.ServeHTTP(w, req)
+
+		var art content.Article
+		_ = json.Unmarshal(w.Body.Bytes(), &art)
+		ids = append(ids, art.ID)
+
+		pubReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/cms/articles/%s/publish", art.ID), nil)
+		pubReq.Header.Set("Authorization", "Bearer "+env.editorToken)
+		pw := httptest.NewRecorder()
+		env.router.ServeHTTP(pw, pubReq)
+	}
+
+	// Pin and order top stories: item 2 order 1, item 1 order 2
+	orderPayload := map[string]any{
+		"items": []map[string]any{
+			{"article_id": ids[1], "top_story_order": 1, "is_top_story": true},
+			{"article_id": ids[0], "top_story_order": 2, "is_top_story": true},
+		},
+	}
+	ordBytes, _ := json.Marshal(orderPayload)
+	req := httptest.NewRequest(http.MethodPut, "/v1/cms/top-stories", bytes.NewReader(ordBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.editorToken)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK updating top stories, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Query public /v1/top-stories
+	req = httptest.NewRequest(http.MethodGet, "/v1/top-stories", nil)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on /v1/top-stories, got %d", w.Code)
+	}
+
+	var topResp struct {
+		Stories []queries.ArticleFeedItem `json:"stories"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &topResp)
+	if len(topResp.Stories) < 2 {
+		t.Fatalf("expected at least 2 top stories, got %d", len(topResp.Stories))
+	}
+	if topResp.Stories[0].ID != ids[1] {
+		t.Errorf("expected first top story to be ID %s, got %s", ids[1], topResp.Stories[0].ID)
+	}
+}
+
+

@@ -48,19 +48,30 @@ func NewArticleUseCases(
 
 // CreateDraftCommand holds parameters for creating a new article draft.
 type CreateDraftCommand struct {
-	ActorID     string
-	ActorRole   identity.SystemRole
-	Title       string
-	Subtitle    *string
-	Summary     string
-	BodyBlocks  []byte
-	ArticleType content.ArticleType
-	AccessLevel content.AccessLevel
-	Category    string
-	Tags        []string
-	CourtCaseID *string
-	CourtName   *string
-	Citation    *string
+	ActorID              string
+	ActorRole            identity.SystemRole
+	Title                string
+	Subtitle             *string
+	Summary              string
+	BodyBlocks           []byte
+	ArticleType          content.ArticleType
+	AccessLevel          content.AccessLevel
+	Category             string
+	Tags                 []string
+	CourtCaseID          *string
+	CourtName            *string
+	Citation             *string
+	PrimarySectionID     *string
+	FeaturedImageKey     *string
+	FeaturedImageCaption *string
+	FeaturedImageAlt     *string
+	MetaTitle            *string
+	MetaDescription      *string
+	CanonicalURL         *string
+	SocialImageKey       *string
+	IsTopStory           bool
+	TopStoryOrder        int
+	RelatedArticleIDs    []string
 }
 
 // CreateDraft creates a new draft article with a guaranteed unique slug.
@@ -76,6 +87,9 @@ func (uc *ArticleUseCases) CreateDraft(ctx context.Context, cmd CreateDraftComma
 	articleType := cmd.ArticleType
 	if articleType == "" {
 		articleType = content.ArticleTypeNews
+	}
+	if !content.IsValidArticleType(articleType) {
+		return nil, fmt.Errorf("%w: invalid article type %s", content.ErrValidationFailed, articleType)
 	}
 
 	accessLevel := cmd.AccessLevel
@@ -102,25 +116,40 @@ func (uc *ArticleUseCases) CreateDraft(ctx context.Context, cmd CreateDraftComma
 		tags = []string{}
 	}
 
+	wordCount, readingTime := content.CalculateWordCountAndReadingTime(cmd.Summary, bodyBlocks)
+
 	a := &content.Article{
-		ID:          articleID,
-		Slug:        slug,
-		Title:       strings.TrimSpace(cmd.Title),
-		Subtitle:    cmd.Subtitle,
-		Summary:     strings.TrimSpace(cmd.Summary),
-		BodyBlocks:  bodyBlocks,
-		ArticleType: articleType,
-		AccessLevel: accessLevel,
-		Status:      content.StatusDraft,
-		AuthorID:    cmd.ActorID,
-		CourtCaseID: cmd.CourtCaseID,
-		Category:    strings.TrimSpace(cmd.Category),
-		Tags:        tags,
-		CourtName:   cmd.CourtName,
-		Citation:    cmd.Citation,
-		Version:     1,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                   articleID,
+		Slug:                 slug,
+		Title:                strings.TrimSpace(cmd.Title),
+		Subtitle:             cmd.Subtitle,
+		Summary:              strings.TrimSpace(cmd.Summary),
+		BodyBlocks:           bodyBlocks,
+		ArticleType:          articleType,
+		AccessLevel:          accessLevel,
+		Status:               content.StatusDraft,
+		AuthorID:             cmd.ActorID,
+		Category:             strings.TrimSpace(cmd.Category),
+		Tags:                 tags,
+		CourtCaseID:          cmd.CourtCaseID,
+		CourtName:            cmd.CourtName,
+		Citation:             cmd.Citation,
+		PrimarySectionID:     cmd.PrimarySectionID,
+		WordCount:            wordCount,
+		ReadingTimeMinutes:   readingTime,
+		FeaturedImageKey:     cmd.FeaturedImageKey,
+		FeaturedImageCaption: cmd.FeaturedImageCaption,
+		FeaturedImageAlt:     cmd.FeaturedImageAlt,
+		MetaTitle:            cmd.MetaTitle,
+		MetaDescription:      cmd.MetaDescription,
+		CanonicalURL:         cmd.CanonicalURL,
+		SocialImageKey:       cmd.SocialImageKey,
+		IsTopStory:           cmd.IsTopStory,
+		TopStoryOrder:        cmd.TopStoryOrder,
+		RelatedArticleIDs:    cmd.RelatedArticleIDs,
+		Version:              1,
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 
 	if err := uc.articleRepo.Create(ctx, a); err != nil {
@@ -132,21 +161,32 @@ func (uc *ArticleUseCases) CreateDraft(ctx context.Context, cmd CreateDraftComma
 
 // UpdateDraftCommand holds parameters for modifying an existing article draft.
 type UpdateDraftCommand struct {
-	ID              string
-	ActorID         string
-	ActorRole       identity.SystemRole
-	ExpectedVersion int
-	Title           string
-	Subtitle        *string
-	Summary         string
-	BodyBlocks      []byte
-	ArticleType     content.ArticleType
-	AccessLevel     content.AccessLevel
-	Category        string
-	Tags            []string
-	CourtCaseID     *string
-	CourtName       *string
-	Citation        *string
+	ID                   string
+	ActorID              string
+	ActorRole            identity.SystemRole
+	ExpectedVersion      int
+	Title                string
+	Subtitle             *string
+	Summary              string
+	BodyBlocks           []byte
+	ArticleType          content.ArticleType
+	AccessLevel          content.AccessLevel
+	Category             string
+	Tags                 []string
+	CourtCaseID          *string
+	CourtName            *string
+	Citation             *string
+	PrimarySectionID     *string
+	FeaturedImageKey     *string
+	FeaturedImageCaption *string
+	FeaturedImageAlt     *string
+	MetaTitle            *string
+	MetaDescription      *string
+	CanonicalURL         *string
+	SocialImageKey       *string
+	IsTopStory           *bool
+	TopStoryOrder        *int
+	RelatedArticleIDs    []string
 }
 
 // UpdateDraft modifies an article draft with optimistic concurrency locking.
@@ -191,6 +231,9 @@ func (uc *ArticleUseCases) UpdateDraft(ctx context.Context, cmd UpdateDraftComma
 		existing.BodyBlocks = cmd.BodyBlocks
 	}
 	if cmd.ArticleType != "" {
+		if !content.IsValidArticleType(cmd.ArticleType) {
+			return nil, fmt.Errorf("%w: invalid article type %s", content.ErrValidationFailed, cmd.ArticleType)
+		}
 		existing.ArticleType = cmd.ArticleType
 	}
 	if cmd.AccessLevel != "" {
@@ -203,6 +246,38 @@ func (uc *ArticleUseCases) UpdateDraft(ctx context.Context, cmd UpdateDraftComma
 	existing.CourtCaseID = cmd.CourtCaseID
 	existing.CourtName = cmd.CourtName
 	existing.Citation = cmd.Citation
+	existing.PrimarySectionID = cmd.PrimarySectionID
+	if cmd.FeaturedImageKey != nil {
+		existing.FeaturedImageKey = cmd.FeaturedImageKey
+	}
+	if cmd.FeaturedImageCaption != nil {
+		existing.FeaturedImageCaption = cmd.FeaturedImageCaption
+	}
+	if cmd.FeaturedImageAlt != nil {
+		existing.FeaturedImageAlt = cmd.FeaturedImageAlt
+	}
+	if cmd.MetaTitle != nil {
+		existing.MetaTitle = cmd.MetaTitle
+	}
+	if cmd.MetaDescription != nil {
+		existing.MetaDescription = cmd.MetaDescription
+	}
+	if cmd.CanonicalURL != nil {
+		existing.CanonicalURL = cmd.CanonicalURL
+	}
+	if cmd.SocialImageKey != nil {
+		existing.SocialImageKey = cmd.SocialImageKey
+	}
+	if cmd.IsTopStory != nil {
+		existing.IsTopStory = *cmd.IsTopStory
+	}
+	if cmd.TopStoryOrder != nil {
+		existing.TopStoryOrder = *cmd.TopStoryOrder
+	}
+	if cmd.RelatedArticleIDs != nil {
+		existing.RelatedArticleIDs = cmd.RelatedArticleIDs
+	}
+
 	existing.UpdatedAt = uc.clock.Now().UTC()
 
 	if err := uc.articleRepo.Update(ctx, existing, cmd.ExpectedVersion); err != nil {
@@ -288,6 +363,88 @@ func (uc *ArticleUseCases) PublishArticle(ctx context.Context, cmd PublishArticl
 	return a, nil
 }
 
+// ScheduleArticleCommand schedules an article for future publication.
+type ScheduleArticleCommand struct {
+	ID          string
+	ActorRole   identity.SystemRole
+	ScheduledAt time.Time
+}
+
+// ScheduleArticle schedules publication for an article.
+func (uc *ArticleUseCases) ScheduleArticle(ctx context.Context, cmd ScheduleArticleCommand) (*content.Article, error) {
+	a, err := uc.articleRepo.GetByID(ctx, cmd.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := uc.clock.Now().UTC()
+	if err := a.Schedule(string(cmd.ActorRole), cmd.ScheduledAt, now); err != nil {
+		return nil, err
+	}
+
+	if err := uc.articleRepo.Update(ctx, a, a.Version); err != nil {
+		return nil, err
+	}
+
+	return a, nil
+}
+
+// SoftDeleteArticle soft-deletes an article.
+func (uc *ArticleUseCases) SoftDeleteArticle(ctx context.Context, id string, actorRole identity.SystemRole) error {
+	if actorRole != identity.RoleAdmin && actorRole != identity.RoleEditor {
+		return content.ErrUnauthorizedWorkflow
+	}
+	now := uc.clock.Now().UTC()
+	return uc.articleRepo.SoftDelete(ctx, id, now)
+}
+
+// RestoreArticle restores a soft-deleted article.
+func (uc *ArticleUseCases) RestoreArticle(ctx context.Context, id string, actorRole identity.SystemRole) error {
+	if actorRole != identity.RoleAdmin && actorRole != identity.RoleEditor {
+		return content.ErrUnauthorizedWorkflow
+	}
+	now := uc.clock.Now().UTC()
+	return uc.articleRepo.Restore(ctx, id, now)
+}
+
+// RestoreRevision restores an article's draft content to a historical revision version.
+func (uc *ArticleUseCases) RestoreRevision(ctx context.Context, articleID string, version int, actorID string, actorRole identity.SystemRole) (*content.Article, error) {
+	if actorRole != identity.RoleAdmin && actorRole != identity.RoleEditor {
+		return nil, content.ErrUnauthorizedWorkflow
+	}
+
+	existing, err := uc.articleRepo.GetByID(ctx, articleID)
+	if err != nil {
+		return nil, err
+	}
+
+	rev, err := uc.articleRepo.GetRevision(ctx, articleID, version)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply revision content
+	existing.Title = rev.Title
+	existing.Subtitle = rev.Subtitle
+	existing.Summary = rev.Summary
+	existing.BodyBlocks = rev.BodyBlocks
+	existing.UpdatedAt = uc.clock.Now().UTC()
+
+	if err := uc.articleRepo.Update(ctx, existing, existing.Version); err != nil {
+		return nil, err
+	}
+
+	return existing, nil
+}
+
+// UpdateTopStories updates pinned top stories orders.
+func (uc *ArticleUseCases) UpdateTopStories(ctx context.Context, items []content.TopStoryOrderItem, actorRole identity.SystemRole) error {
+	if actorRole != identity.RoleAdmin && actorRole != identity.RoleEditor {
+		return content.ErrUnauthorizedWorkflow
+	}
+	return uc.articleRepo.UpdateTopStoriesOrder(ctx, items)
+}
+
 // ArchiveArticleCommand archives an article.
 type ArchiveArticleCommand struct {
 	ID        string
@@ -358,27 +515,31 @@ func (uc *ArticleUseCases) CreateJudgmentSummary(ctx context.Context, cmd Create
 		accessLevel = content.AccessLevelFree
 	}
 
+	wordCount, readingTime := content.CalculateWordCountAndReadingTime(cmd.Summary, bodyBlocks)
+
 	a := &content.Article{
-		ID:            articleID,
-		Slug:          slug,
-		Title:         strings.TrimSpace(cmd.Title),
-		Summary:       strings.TrimSpace(cmd.Summary),
-		BodyBlocks:    bodyBlocks,
-		ArticleType:   content.ArticleTypeJudgmentSummary,
-		AccessLevel:   accessLevel,
-		Status:        content.StatusDraft,
-		AuthorID:      cmd.ActorID,
-		CourtCaseID:   &cmd.CourtCaseID,
-		Category:      "Judgments",
-		Tags:          []string{"judgment", "summary"},
-		CourtName:     &cmd.CourtName,
-		Citation:      cmd.Citation,
-		PDFStorageKey: cmd.PDFStorageKey,
-		PDFSizeBytes:  cmd.PDFSizeBytes,
-		PDFChecksum:   cmd.PDFChecksum,
-		Version:       1,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:                 articleID,
+		Slug:               slug,
+		Title:              strings.TrimSpace(cmd.Title),
+		Summary:            strings.TrimSpace(cmd.Summary),
+		BodyBlocks:         bodyBlocks,
+		ArticleType:        content.ArticleTypeJudgmentSummary,
+		AccessLevel:        accessLevel,
+		Status:             content.StatusDraft,
+		AuthorID:           cmd.ActorID,
+		CourtCaseID:        &cmd.CourtCaseID,
+		Category:           "Judgments",
+		Tags:               []string{"judgment", "summary"},
+		CourtName:          &cmd.CourtName,
+		Citation:           cmd.Citation,
+		PDFStorageKey:      cmd.PDFStorageKey,
+		PDFSizeBytes:       cmd.PDFSizeBytes,
+		PDFChecksum:        cmd.PDFChecksum,
+		WordCount:          wordCount,
+		ReadingTimeMinutes: readingTime,
+		Version:            1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	if err := uc.articleRepo.Create(ctx, a); err != nil {
@@ -394,12 +555,12 @@ func (uc *ArticleUseCases) CreateJudgmentSummary(ctx context.Context, cmd Create
 
 // AttachPDFCommand attaches official judgment PDF metadata to an article.
 type AttachPDFCommand struct {
-	ArticleID    string
-	ActorID      string
-	ActorRole    identity.SystemRole
-	StorageKey   string
-	SizeBytes    int64
-	Checksum     string
+	ArticleID  string
+	ActorID    string
+	ActorRole  identity.SystemRole
+	StorageKey string
+	SizeBytes  int64
+	Checksum   string
 }
 
 // AttachPDF updates the article's PDF attachment metadata.
@@ -440,9 +601,9 @@ type RequestUploadURLCommand struct {
 
 // UploadURLResult contains the generated presigned upload URL and the permanent storage key.
 type UploadURLResult struct {
-	UploadURL   string `json:"upload_url"`
-	StorageKey  string `json:"storage_key"`
-	ExpiresIn   int    `json:"expires_in_seconds"`
+	UploadURL  string `json:"upload_url"`
+	StorageKey string `json:"storage_key"`
+	ExpiresIn  int    `json:"expires_in_seconds"`
 }
 
 // RequestUploadURL validates file type/size limits and returns a signed direct-to-S3 upload URL.
@@ -522,7 +683,6 @@ func (uc *ArticleUseCases) ensureUniqueSlug(ctx context.Context, baseSlug string
 		suffix++
 		slug = fmt.Sprintf("%s-%d", baseSlug, suffix)
 		if suffix > 100 {
-			// Fallback with unique ID fragment
 			return fmt.Sprintf("%s-%s", baseSlug, articleID[:8]), nil
 		}
 	}

@@ -12,21 +12,25 @@ import (
 )
 
 var (
-	ErrArticleNotFound = errors.New("article not found")
+	ErrArticleNotFound   = errors.New("article not found")
 	ErrSlugAlreadyExists = errors.New("an article with this slug already exists")
 )
 
 // ArticleFilter provides search, filtering, and keyset cursor options for querying articles.
 type ArticleFilter struct {
-	Status      *content.ArticleStatus
-	ArticleType *content.ArticleType
-	Category    *string
-	Tag         *string
-	AuthorID    *string
-	CourtCaseID *string
-	Search      *string
-	Limit       int
-	Cursor      *string
+	Status         *content.ArticleStatus
+	ArticleType    *content.ArticleType
+	Category       *string
+	SectionID      *string
+	SectionSlug    *string
+	Tag            *string
+	AuthorID       *string
+	CourtCaseID    *string
+	IsTopStory     *bool
+	IncludeDeleted bool
+	Search         *string
+	Limit          int
+	Cursor         *string
 }
 
 // ArticleRepository defines persistence operations for articles and judgment summaries.
@@ -41,6 +45,20 @@ type ArticleRepository interface {
 	LinkJudgmentToCase(ctx context.Context, caseID string, articleID string) error
 	GetJudgmentByCaseID(ctx context.Context, caseID string) (*content.Article, error)
 	SlugExists(ctx context.Context, slug string, excludeID string) (bool, error)
+
+	// Phase 9 Revisions, Redirects, Scheduling, Soft-Delete & Top Stories
+	CreateRevision(ctx context.Context, rev *content.ArticleRevision) error
+	ListRevisions(ctx context.Context, articleID string) ([]content.ArticleRevision, error)
+	GetRevision(ctx context.Context, articleID string, version int) (*content.ArticleRevision, error)
+	SaveSlugRedirect(ctx context.Context, articleID string, oldSlug string) error
+	GetSlugRedirect(ctx context.Context, oldSlug string) (*content.SlugRedirect, error)
+	SoftDelete(ctx context.Context, id string, now time.Time) error
+	Restore(ctx context.Context, id string, now time.Time) error
+	GetScheduledDue(ctx context.Context, now time.Time, limit int) ([]content.Article, error)
+	PublishScheduled(ctx context.Context, articleID string, publishedAt time.Time) error
+	ListTopStories(ctx context.Context, limit int) ([]content.Article, error)
+	UpdateTopStoriesOrder(ctx context.Context, items []content.TopStoryOrderItem) error
+	GetRelatedArticles(ctx context.Context, articleID string, limit int) ([]content.Article, error)
 }
 
 // EncodeCursor creates an opaque, base64-encoded keyset pagination cursor from a timestamp and UUID.

@@ -1,6 +1,10 @@
+
 package content
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,15 +15,15 @@ func TestArticleWorkflow(t *testing.T) {
 	editorID := "editor-456"
 
 	article := &Article{
-		ID:          "art-001",
-		Title:       "Supreme Court Ruling on Article 21",
-		Summary:     "Important constitutional bench ruling expanding personal liberty.",
-		Category:    "Constitutional Law",
-		Status:      StatusDraft,
-		AuthorID:    authorID,
-		Version:     1,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:        "art-001",
+		Title:     "Supreme Court Ruling on Article 21",
+		Summary:   "Important constitutional bench ruling expanding personal liberty.",
+		Category:  "Constitutional Law",
+		Status:    StatusDraft,
+		AuthorID:  authorID,
+		Version:   1,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	// 1. Reporter tries to publish directly -> Forbidden
@@ -68,7 +72,19 @@ func TestArticleWorkflow(t *testing.T) {
 		t.Fatalf("failed resubmitting draft: %v", err)
 	}
 
-	// 9. Editor approves and publishes -> OK
+	// 9. Editor schedules article for 2 hours later -> OK
+	scheduledTime := now.Add(2 * time.Hour)
+	if err := article.Schedule("editor", scheduledTime, now); err != nil {
+		t.Fatalf("expected scheduling to succeed, got: %v", err)
+	}
+	if article.Status != StatusScheduled {
+		t.Errorf("expected status to be scheduled, got: %s", article.Status)
+	}
+	if article.ScheduledAt == nil || !article.ScheduledAt.Equal(scheduledTime) {
+		t.Errorf("expected scheduled_at to match scheduledTime")
+	}
+
+	// 10. Editor approves and publishes -> OK
 	publishTime := now.Add(2 * time.Hour)
 	if err := article.ApproveAndPublish(editorID, "editor", publishTime); err != nil {
 		t.Fatalf("expected editor publish to succeed, got: %v", err)
@@ -83,16 +99,26 @@ func TestArticleWorkflow(t *testing.T) {
 		t.Errorf("expected published_at to match publishTime")
 	}
 
-	// 10. Editor archives article -> OK
-	if err := article.Archive("editor", now.Add(3*time.Hour)); err != nil {
+	// 11. Soft delete and restore
+	article.SoftDelete(now.Add(3 * time.Hour))
+	if article.DeletedAt == nil {
+		t.Errorf("expected deleted_at to be set after soft delete")
+	}
+	article.Restore(now.Add(4 * time.Hour))
+	if article.DeletedAt != nil {
+		t.Errorf("expected deleted_at to be nil after restore")
+	}
+
+	// 12. Editor archives article -> OK
+	if err := article.Archive("editor", now.Add(5*time.Hour)); err != nil {
 		t.Fatalf("expected archiving to succeed, got: %v", err)
 	}
 	if article.Status != StatusArchived {
 		t.Errorf("expected status to be archived, got: %s", article.Status)
 	}
 
-	// 11. Archiving again fails
-	if err := article.Archive("admin", now.Add(4*time.Hour)); err == nil {
+	// 13. Archiving again fails
+	if err := article.Archive("admin", now.Add(6*time.Hour)); err == nil {
 		t.Errorf("expected re-archiving to fail")
 	}
 }
@@ -143,5 +169,139 @@ func TestAttachPDF(t *testing.T) {
 	}
 	if article.PDFChecksum == nil || *article.PDFChecksum != "sha256-abcdef" {
 		t.Errorf("expected checksum to be set")
+	}
+}
+
+func TestArticleTypes(t *testing.T) {
+	validTypes := []ArticleType{
+		ArticleTypeNews, ArticleTypeCommentary, ArticleTypeEditorial, ArticleTypeJudgmentSummary,
+		ArticleTypeTopStory, ArticleTypeColumn, ArticleTypeOpinion, ArticleTypeInterview,
+		ArticleTypeRoundUp, ArticleTypeDigest, ArticleTypeKnowTheLaw, ArticleTypeBookReview,
+		ArticleTypeJobUpdate, ArticleTypeEvent, ArticleTypeVideo, ArticleTypeCartoon,
+	}
+
+	for _, vt := range validTypes {
+		if !IsValidArticleType(vt) {
+			t.Errorf("expected %s to be valid article type", vt)
+		}
+	}
+
+	if IsValidArticleType("invalid_unknown_type") {
+		t.Errorf("expected invalid_unknown_type to be rejected")
+	}
+}
+
+func TestExtractOutlineAndTOC(t *testing.T) {
+	sampleBlocks := []map[string]any{
+		{
+			"type": "heading",
+			"attrs": map[string]any{
+				"level": 2,
+			},
+			"content": []any{
+				map[string]any{"type": "text", "text": "Background of the Dispute"},
+			},
+		},
+		{
+			"type": "paragraph",
+			"content": []any{
+				map[string]any{"type": "text", "text": "The appellants approached the court under Article 136."},
+			},
+		},
+		{
+			"type": "heading",
+			"attrs": map[string]any{
+				"level": 3,
+			},
+			"content": []any{
+				map[string]any{"type": "text", "text": "Statutory Interpretation of Section 9"},
+			},
+		},
+		{
+			"type": "heading",
+			"attrs": map[string]any{
+				"level": 2,
+			},
+			"content": []any{
+				map[string]any{"type": "text", "text": "Conclusion & Operative Order"},
+			},
+		},
+	}
+
+	blocksBytes, err := json.Marshal(sampleBlocks)
+	if err != nil {
+		t.Fatalf("failed marshaling blocks: %v", err)
+	}
+
+	outline := ExtractOutline(blocksBytes)
+	if len(outline) != 3 {
+		t.Fatalf("expected 3 outline items, got %d", len(outline))
+	}
+
+	if outline[0].Text != "Background of the Dispute" || outline[0].Level != 2 || outline[0].ID != "background-of-the-dispute" {
+		t.Errorf("unexpected outline item 0: %+v", outline[0])
+	}
+	if outline[1].Text != "Statutory Interpretation of Section 9" || outline[1].Level != 3 {
+		t.Errorf("unexpected outline item 1: %+v", outline[1])
+	}
+	if outline[2].Text != "Conclusion & Operative Order" || outline[2].Level != 2 || outline[2].ID != "conclusion-operative-order" {
+		t.Errorf("unexpected outline item 2: %+v", outline[2])
+	}
+}
+
+func TestLongArticle_25000Words(t *testing.T) {
+	// Construct a massive 25,000 word article body with headings, quotes, and paragraphs
+	numParagraphs := 250 // 250 * 100 words = 25,000 words
+	blocks := make([]map[string]any, 0, numParagraphs+10)
+
+	paragraphText := strings.Repeat("legal jurisprudence constitutional precedent statutory interpretation bench order hearing verdict ", 10) // 100 words
+
+	for i := 1; i <= numParagraphs; i++ {
+		if i%25 == 1 {
+			blocks = append(blocks, map[string]any{
+				"type": "heading",
+				"attrs": map[string]any{
+					"level": 2,
+				},
+				"content": []any{
+					map[string]any{"type": "text", "text": fmt.Sprintf("Section %d: Comprehensive Analysis of Precedents", i/25+1)},
+				},
+			})
+		}
+		blocks = append(blocks, map[string]any{
+			"type": "paragraph",
+			"content": []any{
+				map[string]any{"type": "text", "text": paragraphText},
+			},
+		})
+	}
+
+	blocksBytes, err := json.Marshal(blocks)
+	if err != nil {
+		t.Fatalf("failed marshaling 25,000 word body: %v", err)
+	}
+
+	summary := "A monumental 25,000-word treatise reviewing fifty years of constitutional jurisprudence."
+
+	start := time.Now()
+	wordCount, readingTime := CalculateWordCountAndReadingTime(summary, blocksBytes)
+	elapsed := time.Since(start)
+
+	if elapsed > 1*time.Second {
+		t.Errorf("word count calculation too slow: took %v", elapsed)
+	}
+
+	if wordCount < 25000 {
+		t.Errorf("expected at least 25,000 words, got: %d", wordCount)
+	}
+
+	expectedMinReadingTime := 25000 / 200 // 125 minutes
+	if readingTime < expectedMinReadingTime {
+		t.Errorf("expected reading time >= %d min, got: %d", expectedMinReadingTime, readingTime)
+	}
+
+	outline := ExtractOutline(blocksBytes)
+	if len(outline) != 10 {
+		t.Errorf("expected 10 outline items for 250 paragraphs, got: %d", len(outline))
 	}
 }

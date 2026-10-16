@@ -15,6 +15,8 @@ import {
   LogOut,
   X,
   Scale,
+  FolderTree,
+  Flame,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -45,6 +47,18 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       href: '/articles',
       icon: FileText,
       show: hasRole('reporter', 'editor', 'admin'),
+    },
+    {
+      name: 'Top Stories',
+      href: '/top-stories',
+      icon: Flame,
+      show: hasRole('editor', 'admin'),
+    },
+    {
+      name: 'Sections',
+      href: '/sections',
+      icon: FolderTree,
+      show: hasRole('editor', 'admin'),
     },
     {
       name: 'Review Queue',
