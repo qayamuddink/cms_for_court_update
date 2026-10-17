@@ -1239,6 +1239,58 @@ paths:
                     items:
                       $ref: '#/components/schemas/ArticleFeedItem'
 
+  /v1/judgments:
+    get:
+      summary: List judgments with search and filter
+      description: Returns a paginated feed of published judgments with filtering by court, year, search text, or statute.
+      operationId: listJudgments
+      tags:
+        - Judgments
+      parameters:
+        - name: court_code
+          in: query
+          schema:
+            type: string
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: statute
+          in: query
+          schema:
+            type: string
+        - name: case_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Paginated judgments list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialJudgmentListResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /v1/judgments/{id}:
     get:
       summary: Get judgment summary by ID
@@ -1268,6 +1320,96 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/judgments/{id}/pages:
+    get:
+      summary: Get judgment extracted text pages
+      description: Returns extracted OCR and text layer pages for the judgment document.
+      operationId: getJudgmentPages
+      tags:
+        - Judgments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Extracted page items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JudgmentPagesResponse'
+        '404':
+          description: Judgment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/judgments/{id}/download:
+    get:
+      summary: Get presigned gated download URL
+      description: Returns a temporary signed URL for downloading the official judgment PDF, logging an audit record. Gated for premium judgments.
+      operationId: getJudgmentDownloadURL
+      tags:
+        - Judgments
+      security:
+        - BearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Presigned download URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JudgmentDownloadResponse'
+        '403':
+          description: Subscription required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Judgment or PDF not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/citations/{citation}:
+    get:
+      summary: Lookup judgment by official citation
+      description: Retrieves a judgment record and headnotes by its unique citation (e.g. 2026 CourtDesk (SC) 1).
+      operationId: getJudgmentByCitation
+      tags:
+        - Judgments
+      parameters:
+        - name: citation
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Judgment detail and cited statutes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialJudgmentDetailResponse'
+        '404':
+          description: Citation not found
           content:
             application/json:
               schema:
@@ -1923,9 +2065,47 @@ paths:
                 $ref: '#/components/schemas/Article'
 
   /v1/cms/judgments:
+    get:
+      summary: List CMS judgments
+      description: Returns a paginated list of judgment drafts and published judgments for editorial staff.
+      operationId: listCMSJudgments
+      tags:
+        - CMS Judgments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: court_code
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of CMS judgments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialJudgmentListResponse'
     post:
-      summary: Create judgment summary (Editor/Admin only)
-      description: Creates a judgment summary article and links it to a court case in a single operation.
+      summary: Create judgment summary or official judgment draft (Staff only)
+      description: Creates an official judgment draft with headnotes and statutes, or legacy judgment summary article.
       operationId: createJudgmentSummary
       tags:
         - CMS Judgments
@@ -1939,11 +2119,153 @@ paths:
               $ref: '#/components/schemas/CreateJudgmentRequest'
       responses:
         '201':
-          description: Judgment summary created and linked
+          description: Judgment draft created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Article'
+                $ref: '#/components/schemas/OfficialJudgmentResponse'
+
+  /v1/cms/judgments/{id}:
+    get:
+      summary: Get CMS judgment detail
+      description: Retrieves detailed judgment information including headnotes and statutes cited for editing.
+      operationId: getCMSJudgment
+      tags:
+        - CMS Judgments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Judgment detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialJudgmentDetailResponse'
+    put:
+      summary: Update judgment draft
+      description: Updates judgment metadata, bench, headnotes, and structured statutory references.
+      operationId: updateCMSJudgment
+      tags:
+        - CMS Judgments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJudgmentRequest'
+      responses:
+        '200':
+          description: Judgment updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialJudgmentResponse'
+
+  /v1/cms/judgments/{id}/pdf:
+    post:
+      summary: Upload official judgment PDF
+      description: Uploads and attaches official judgment PDF with magic bytes validation, duplicate checksum detection, virus scanning, and preview generation.
+      operationId: uploadJudgmentPDF
+      tags:
+        - CMS Judgments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: filename
+          in: query
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: PDF attached and queued for text extraction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialJudgmentResponse'
+        '400':
+          description: Invalid PDF or format error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Duplicate PDF checksum already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: File infected or rejected by virus scanner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/judgments/{id}/publish:
+    post:
+      summary: Publish judgment and allocate sequential citation
+      description: Atomically increments the gapless sequential citation counter for the court and year, and marks the judgment published.
+      operationId: publishCMSJudgment
+      tags:
+        - CMS Judgments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishJudgmentPayload'
+      responses:
+        '200':
+          description: Judgment successfully published with official citation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishJudgmentResponse'
+        '400':
+          description: Publishing error (e.g. missing attached PDF)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /v1/cms/uploads/presigned-url:
     post:
@@ -3403,17 +3725,60 @@ components:
 
     CreateJudgmentRequest:
       type: object
-      required:
-        - court_case_id
-        - title
-        - summary
-        - court_name
       properties:
+        case_title:
+          type: string
+        case_number:
+          type: string
+        court:
+          type: string
+        court_code:
+          type: string
+        bench:
+          type: array
+          items:
+            type: string
+        judgment_date:
+          type: string
+        decision_date:
+          type: string
+        appellant:
+          type: string
+        respondent:
+          type: string
+        advocates:
+          type: array
+          items:
+            type: string
+        subject_tags:
+          type: array
+          items:
+            type: string
+        issues:
+          type: string
+        held:
+          type: string
+        headnote:
+          type: string
+        summary:
+          type: string
+        key_takeaways:
+          type: array
+          items:
+            type: string
+        statutes:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatuteCitedInput'
         court_case_id:
+          type: string
+        article_id:
           type: string
         title:
           type: string
-        summary:
+        court_name:
+          type: string
+        citation:
           type: string
         body_blocks:
           type: array
@@ -3423,10 +3788,6 @@ components:
           type: string
           enum: [free, premium]
           default: free
-        court_name:
-          type: string
-        citation:
-          type: string
         pdf_storage_key:
           type: string
         pdf_size_bytes:
@@ -3809,6 +4170,247 @@ components:
         scheduled_at:
           type: string
           format: date-time
+
+    OfficialJudgmentRecord:
+      type: object
+      required:
+        - id
+        - case_title
+        - case_number
+        - court
+        - court_code
+        - judgment_date
+        - appellant
+        - respondent
+        - summary
+        - access_level
+        - status
+        - extraction_status
+      properties:
+        id:
+          type: string
+        citation:
+          type: string
+        citation_year:
+          type: integer
+        citation_court_code:
+          type: string
+        citation_number:
+          type: integer
+        case_title:
+          type: string
+        case_number:
+          type: string
+        court:
+          type: string
+        court_code:
+          type: string
+        bench:
+          type: array
+          items:
+            type: string
+        judgment_date:
+          type: string
+          format: date
+        decision_date:
+          type: string
+          format: date
+        appellant:
+          type: string
+        respondent:
+          type: string
+        advocates:
+          type: array
+          items:
+            type: string
+        subject_tags:
+          type: array
+          items:
+            type: string
+        issues:
+          type: string
+        held:
+          type: string
+        headnote:
+          type: string
+        summary:
+          type: string
+        key_takeaways:
+          type: array
+          items:
+            type: string
+        court_case_id:
+          type: string
+        article_id:
+          type: string
+        access_level:
+          type: string
+          enum: [free, premium]
+        status:
+          type: string
+          enum: [draft, published, archived]
+        pdf_storage_key:
+          type: string
+        pdf_filename:
+          type: string
+        pdf_size_bytes:
+          type: integer
+        pdf_checksum:
+          type: string
+        pdf_page_count:
+          type: integer
+        pdf_thumbnail_key:
+          type: string
+        pdf_preview_key:
+          type: string
+        extraction_status:
+          type: string
+          enum: [pending, processing, completed, ocr_completed, failed]
+        created_by:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    StatuteCitedItem:
+      type: object
+      required:
+        - id
+        - statute_name
+      properties:
+        id:
+          type: string
+        judgment_id:
+          type: string
+        statute_name:
+          type: string
+        sections_cited:
+          type: array
+          items:
+            type: string
+
+    StatuteCitedInput:
+      type: object
+      required:
+        - statute_name
+      properties:
+        statute_name:
+          type: string
+        sections_cited:
+          type: array
+          items:
+            type: string
+
+    OfficialJudgmentDetailResponse:
+      type: object
+      required:
+        - judgment
+      properties:
+        judgment:
+          $ref: '#/components/schemas/OfficialJudgmentRecord'
+        statutes:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatuteCitedItem'
+
+    OfficialJudgmentListResponse:
+      type: object
+      required:
+        - judgments
+        - total
+        - limit
+        - offset
+      properties:
+        judgments:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficialJudgmentRecord'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    JudgmentPageItem:
+      type: object
+      required:
+        - id
+        - page_number
+        - text_content
+      properties:
+        id:
+          type: string
+        judgment_id:
+          type: string
+        page_number:
+          type: integer
+        text_content:
+          type: string
+        has_ocr:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    JudgmentPagesResponse:
+      type: object
+      required:
+        - pages
+      properties:
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/JudgmentPageItem'
+
+    JudgmentDownloadResponse:
+      type: object
+      required:
+        - download_url
+        - citation
+        - filename
+        - expires_in_seconds
+      properties:
+        download_url:
+          type: string
+        citation:
+          type: string
+        filename:
+          type: string
+        expires_in_seconds:
+          type: integer
+
+    PublishJudgmentPayload:
+      type: object
+      properties:
+        brand_prefix:
+          type: string
+
+    PublishJudgmentResponse:
+      type: object
+      required:
+        - judgment
+        - citation
+      properties:
+        judgment:
+          $ref: '#/components/schemas/OfficialJudgmentRecord'
+        citation:
+          type: string
+
+    OfficialJudgmentResponse:
+      type: object
+      required:
+        - judgment
+      properties:
+        judgment:
+          $ref: '#/components/schemas/OfficialJudgmentRecord'
+
 
 
 

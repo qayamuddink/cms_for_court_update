@@ -88,3 +88,64 @@ func (c *SQLSubscriptionChecker) HasArticleAccess(ctx context.Context, userID *s
 
 	return false, nil
 }
+
+// HasJudgmentAccess determines whether the given user can access/download a judgment PDF.
+func (c *SQLSubscriptionChecker) HasJudgmentAccess(ctx context.Context, userID *string, accessLevel string) (bool, error) {
+	if accessLevel == "free" || accessLevel == "" {
+		return true, nil
+	}
+
+	if userID == nil || *userID == "" {
+		return false, nil
+	}
+
+	// Fast path via AuthClaims in context
+	if claims := ports.AuthClaimsFromContext(ctx); claims != nil && claims.UserID == *userID {
+		if claims.SystemRole == "admin" ||
+			claims.SystemRole == "editor" ||
+			claims.SystemRole == "editor_in_chief" ||
+			claims.SystemRole == "senior_editor" ||
+			claims.SystemRole == "reporter" ||
+			claims.Entitlement.Tier == "staff" {
+			return true, nil
+		}
+
+		if claims.Entitlement.Tier != "free" && claims.Entitlement.Tier != "" && claims.Entitlement.ExpiresAt > time.Now().Unix() {
+			return true, nil
+		}
+	}
+
+	// Fallback check: user account role from database
+	if c.userRepo != nil {
+		u, err := c.userRepo.GetByID(ctx, *userID)
+		if err == nil && u != nil {
+			if u.SystemRole == "admin" ||
+				u.SystemRole == "editor" ||
+				u.SystemRole == "editor_in_chief" ||
+				u.SystemRole == "senior_editor" ||
+				u.SystemRole == "reporter" {
+				return true, nil
+			}
+		}
+	}
+
+	// Fallback check: active subscription in PostgreSQL
+	if c.db != nil {
+		query := `
+			SELECT EXISTS (
+				SELECT 1 FROM subscriptions
+				WHERE user_id = $1
+				  AND status IN ('active', 'trialing')
+				  AND current_period_end > $2
+			);
+		`
+		var hasActiveSub bool
+		err := c.db.QueryRowContext(ctx, query, *userID, time.Now().UTC()).Scan(&hasActiveSub)
+		if err != nil {
+			return false, err
+		}
+		return hasActiveSub, nil
+	}
+
+	return false, nil
+}

@@ -17,6 +17,7 @@ import (
 	grpcAdapter "github.com/livelaw/backend/internal/adapters/inbound/grpc"
 	httpAdapter "github.com/livelaw/backend/internal/adapters/inbound/http"
 	"github.com/livelaw/backend/internal/adapters/outbound/entitlement"
+	"github.com/livelaw/backend/internal/adapters/outbound/extractor"
 	"github.com/livelaw/backend/internal/adapters/outbound/filestore"
 	"github.com/livelaw/backend/internal/adapters/outbound/hasher"
 	"github.com/livelaw/backend/internal/adapters/outbound/idgen"
@@ -24,6 +25,7 @@ import (
 	"github.com/livelaw/backend/internal/adapters/outbound/payment"
 	"github.com/livelaw/backend/internal/adapters/outbound/postgres"
 	"github.com/livelaw/backend/internal/adapters/outbound/push"
+	"github.com/livelaw/backend/internal/adapters/outbound/scanner"
 	"github.com/livelaw/backend/internal/adapters/outbound/token"
 	"github.com/livelaw/backend/internal/application/commands"
 	"github.com/livelaw/backend/internal/application/ports"
@@ -185,7 +187,10 @@ func main() {
 	compositePublisher := commands.NewCompositeEventPublisher(eventPublisher, pushDispatcher)
 	sectionRepo := postgres.NewSQLSectionRepository(db)
 	articleRepo := postgres.NewSQLArticleRepository(db)
+	judgmentRepo := postgres.NewSQLJudgmentRepository(db)
 	entitlementChecker := entitlement.NewSQLSubscriptionChecker(db, userRepo)
+	virusScanner := scanner.NewStubScanner(getEnv("CLAMAV_ADDR", ""))
+	pdfExtractor := extractor.NewStandardPDFExtractor(nil)
 
 	// Seed initial users if enabled
 	if seedData {
@@ -207,6 +212,10 @@ func main() {
 	scheduledPublisher := commands.NewScheduledPublisherWorker(articleRepo, clock, 10*time.Second)
 	scheduledPublisher.Start(workerCtx)
 
+	// Start PDF Extraction & OCR Worker in background (Phase 10)
+	pdfWorker := commands.NewPDFExtractionWorker(judgmentRepo, fileStore, pdfExtractor, idGenerator, clock, 5*time.Second)
+	pdfWorker.Start(workerCtx)
+
 	// Wire application use cases (domain and use cases NEVER change between modes!)
 	authUseCases := commands.NewAuthUseCases(userRepo, tokenRepo, pwHasher, tokenService, idGenerator, clock, subRepo)
 	userQueries := queries.NewUserQueries(userRepo)
@@ -215,6 +224,8 @@ func main() {
 	sectionUseCases := commands.NewSectionUseCases(sectionRepo, idGenerator, clock)
 	articleUseCases := commands.NewArticleUseCases(articleRepo, idGenerator, clock, fileStore)
 	articleQueries := queries.NewArticleQueries(articleRepo, sectionRepo, entitlementChecker, fileStore)
+	judgmentUseCases := commands.NewJudgmentUseCases(judgmentRepo, fileStore, virusScanner, pdfExtractor, idGenerator, clock)
+	judgmentQueries := queries.NewJudgmentQueryUseCases(judgmentRepo, entitlementChecker, fileStore, clock)
 	subUseCases := commands.NewSubscriptionUseCases(subRepo, userRepo, paymentGateway, idGenerator, clock)
 	subQueries := queries.NewSubscriptionQueries(subRepo)
 	followUseCases := commands.NewFollowUseCases(caseFollowRepo, deviceTokenRepo, caseRepo, idGenerator, clock)
@@ -234,6 +245,8 @@ func main() {
 		SectionUseCases:      sectionUseCases,
 		ArticleUseCases:      articleUseCases,
 		ArticleQueries:       articleQueries,
+		JudgmentUseCases:     judgmentUseCases,
+		JudgmentQueries:      judgmentQueries,
 		SubscriptionUseCases: subUseCases,
 		SubscriptionQueries:  subQueries,
 		FollowUseCases:       followUseCases,

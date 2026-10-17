@@ -10,4 +10,7 @@ import (
 type EntitlementChecker interface {
 	// HasArticleAccess returns true if the user is authorized to read the full body of the article.
 	HasArticleAccess(ctx context.Context, userID *string, article *content.Article) (bool, error)
+
+	// HasJudgmentAccess returns true if the user is authorized to download or access full judgment content.
+	HasJudgmentAccess(ctx context.Context, userID *string, judgmentAccessLevel string) (bool, error)
 }

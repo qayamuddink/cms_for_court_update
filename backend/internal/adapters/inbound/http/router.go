@@ -26,6 +26,8 @@ type RouterConfig struct {
 	SectionUseCases      *commands.SectionUseCases
 	SubscriptionUseCases *commands.SubscriptionUseCases
 	SubscriptionQueries  *queries.SubscriptionQueries
+	JudgmentUseCases     *commands.JudgmentUseCases
+	JudgmentQueries      *queries.JudgmentQueryUseCases
 	FollowUseCases       *commands.FollowUseCases
 	FollowQueries        *queries.FollowQueries
 	LiveEngine           ports.LiveEnginePort
@@ -112,7 +114,9 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		mux.HandleFunc("GET /v1/articles/{slug}", articlePublicHandler.GetBySlug)
 		mux.HandleFunc("GET /v1/articles/{id}/related", articlePublicHandler.GetRelated)
 		mux.HandleFunc("GET /v1/top-stories", articlePublicHandler.ListTopStories)
-		mux.HandleFunc("GET /v1/judgments/{id}", articlePublicHandler.GetJudgment)
+		if cfg.JudgmentQueries == nil {
+			mux.HandleFunc("GET /v1/judgments/{id}", articlePublicHandler.GetJudgment)
+		}
 		mux.HandleFunc("GET /v1/cases/{id}/judgment", articlePublicHandler.GetCaseJudgment)
 	}
 
@@ -141,8 +145,32 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		mux.HandleFunc("PUT /v1/cms/top-stories", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.UpdateTopStories))
 
 		// Judgments and Upload URLs
-		mux.HandleFunc("POST /v1/cms/judgments", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.CreateJudgmentSummary))
+		if cfg.JudgmentUseCases == nil {
+			mux.HandleFunc("POST /v1/cms/judgments", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.CreateJudgmentSummary))
+		}
 		mux.HandleFunc("POST /v1/cms/uploads/presigned-url", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(cmsArticleHandler.PresignUpload))
+	}
+
+	// 7b. Judgments, Citations, Headnotes & PDF Downloads (Phase 10)
+	if cfg.JudgmentQueries != nil || cfg.JudgmentUseCases != nil {
+		judgmentHandler := NewJudgmentHandler(cfg.JudgmentUseCases, cfg.JudgmentQueries, cfg.ArticleUseCases, cfg.ArticleQueries)
+
+		if cfg.JudgmentQueries != nil {
+			mux.HandleFunc("GET /v1/judgments", judgmentHandler.ListJudgments)
+			mux.HandleFunc("GET /v1/judgments/{id}", judgmentHandler.GetJudgment)
+			mux.HandleFunc("GET /v1/judgments/{id}/pages", judgmentHandler.GetJudgmentPages)
+			mux.HandleFunc("GET /v1/judgments/{id}/download", judgmentHandler.GetDownloadURL)
+			mux.HandleFunc("GET /v1/citations/{citation...}", judgmentHandler.GetJudgmentByCitation)
+		}
+
+		if cfg.JudgmentUseCases != nil {
+			mux.HandleFunc("POST /v1/cms/judgments", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(judgmentHandler.CreateDraft))
+			mux.HandleFunc("GET /v1/cms/judgments", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(judgmentHandler.ListCMS))
+			mux.HandleFunc("GET /v1/cms/judgments/{id}", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(judgmentHandler.GetCMS))
+			mux.HandleFunc("PUT /v1/cms/judgments/{id}", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(judgmentHandler.Update))
+			mux.HandleFunc("POST /v1/cms/judgments/{id}/pdf", RequireRoles(identity.RoleReporter, identity.RoleEditor, identity.RoleAdmin)(judgmentHandler.AttachPDF))
+			mux.HandleFunc("POST /v1/cms/judgments/{id}/publish", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(judgmentHandler.Publish))
+		}
 	}
 
 	// 8. Subscriptions & Payment Webhooks
