@@ -114,6 +114,7 @@ type JudgmentUseCases struct {
 	idGen        ports.IDGenerator
 	clock        ports.Clock
 	brandPrefix  string
+	outboxRepo   ports.OutboxRepository
 }
 
 // NewJudgmentUseCases instantiates JudgmentUseCases.
@@ -139,6 +140,11 @@ func NewJudgmentUseCases(
 		clock:        clock,
 		brandPrefix:  brand,
 	}
+}
+
+// SetOutboxRepository attaches an outbox repository to publish search and indexing events.
+func (uc *JudgmentUseCases) SetOutboxRepository(repo ports.OutboxRepository) {
+	uc.outboxRepo = repo
 }
 
 // CreateDraft creates a new judgment in draft status.
@@ -389,6 +395,18 @@ func (uc *JudgmentUseCases) Publish(ctx context.Context, cmd PublishJudgmentComm
 
 	if err := uc.judgmentRepo.Update(ctx, j); err != nil {
 		return nil, fmt.Errorf("failed to persist published judgment: %w", err)
+	}
+
+	if uc.outboxRepo != nil {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "judgment",
+			AggregateID:   j.ID,
+			EventType:     "judgment.published",
+			Payload:       []byte(fmt.Sprintf(`{"judgment_id":"%s"}`, j.ID)),
+			SchemaVersion: 1,
+			CreatedAt:     now.Format(time.RFC3339),
+		})
 	}
 
 	return j, nil

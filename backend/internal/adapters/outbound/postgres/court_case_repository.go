@@ -194,6 +194,39 @@ func (r *SQLCourtCaseRepository) ListLiveCases(ctx context.Context) ([]livecase.
 	return cases, rows.Err()
 }
 
+// ListAll returns court cases up to the specified limit.
+func (r *SQLCourtCaseRepository) ListAll(ctx context.Context, limit int) ([]livecase.CourtCase, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	query := `
+		SELECT
+			id, court_name, case_number, case_type, title,
+			bench_judges, presiding_judge, petitioner_parties, respondent_parties,
+			status, next_hearing_at, last_sequence_no, is_live,
+			judgment_article_id, created_at, updated_at
+		FROM court_cases
+		ORDER BY updated_at DESC
+		LIMIT $1;
+	`
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing all court cases: %w", err)
+	}
+	defer rows.Close()
+
+	var cases []livecase.CourtCase
+	for rows.Next() {
+		c, err := r.scanCase(rows)
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, *c)
+	}
+
+	return cases, rows.Err()
+}
+
 func (r *SQLCourtCaseRepository) scanCase(s scannable) (*livecase.CourtCase, error) {
 	var c livecase.CourtCase
 	var statusStr string

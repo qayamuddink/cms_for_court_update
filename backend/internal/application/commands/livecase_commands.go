@@ -108,6 +108,18 @@ func (uc *LiveCaseUseCases) CreateCase(ctx context.Context, cmd CreateCaseComman
 		return nil, err
 	}
 
+	if uc.outboxRepo != nil {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "court_case",
+			AggregateID:   c.ID,
+			EventType:     "case.created",
+			Payload:       []byte(fmt.Sprintf(`{"case_id":"%s"}`, c.ID)),
+			SchemaVersion: 1,
+			CreatedAt:     now.Format(time.RFC3339),
+		})
+	}
+
 	return c, nil
 }
 
@@ -161,6 +173,18 @@ func (uc *LiveCaseUseCases) UpdateCase(ctx context.Context, cmd UpdateCaseComman
 		return nil, err
 	}
 
+	if uc.outboxRepo != nil {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "court_case",
+			AggregateID:   c.ID,
+			EventType:     "case.updated",
+			Payload:       []byte(fmt.Sprintf(`{"case_id":"%s"}`, c.ID)),
+			SchemaVersion: 1,
+			CreatedAt:     c.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
 	return c, nil
 }
 
@@ -175,7 +199,24 @@ func (uc *LiveCaseUseCases) SetCaseLive(ctx context.Context, actorRole identity.
 		return nil, err
 	}
 
-	return uc.caseRepo.GetByID(ctx, caseID)
+	c, err := uc.caseRepo.GetByID(ctx, caseID)
+	if err != nil {
+		return nil, err
+	}
+
+	if uc.outboxRepo != nil {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "court_case",
+			AggregateID:   caseID,
+			EventType:     "case.live_status_changed",
+			Payload:       []byte(fmt.Sprintf(`{"case_id":"%s","is_live":%t}`, caseID, isLive)),
+			SchemaVersion: 1,
+			CreatedAt:     now.Format(time.RFC3339),
+		})
+	}
+
+	return c, nil
 }
 
 // AssignReporter assigns a reporter to report live on a court case.

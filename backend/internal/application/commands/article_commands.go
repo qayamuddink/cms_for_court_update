@@ -29,6 +29,7 @@ type ArticleUseCases struct {
 	idGen       ports.IDGenerator
 	clock       ports.Clock
 	fileStore   ports.FileStore
+	outboxRepo  ports.OutboxRepository
 }
 
 // NewArticleUseCases creates a new ArticleUseCases instance.
@@ -44,6 +45,11 @@ func NewArticleUseCases(
 		clock:       clock,
 		fileStore:   fileStore,
 	}
+}
+
+// SetOutboxRepository attaches an outbox repository for publishing search and notification events.
+func (uc *ArticleUseCases) SetOutboxRepository(repo ports.OutboxRepository) {
+	uc.outboxRepo = repo
 }
 
 // CreateDraftCommand holds parameters for creating a new article draft.
@@ -284,6 +290,18 @@ func (uc *ArticleUseCases) UpdateDraft(ctx context.Context, cmd UpdateDraftComma
 		return nil, err
 	}
 
+	if uc.outboxRepo != nil && existing.Status == content.StatusPublished {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "article",
+			AggregateID:   existing.ID,
+			EventType:     "article.updated",
+			Payload:       []byte(fmt.Sprintf(`{"article_id":"%s"}`, existing.ID)),
+			SchemaVersion: 1,
+			CreatedAt:     existing.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
 	return existing, nil
 }
 
@@ -360,6 +378,18 @@ func (uc *ArticleUseCases) PublishArticle(ctx context.Context, cmd PublishArticl
 		return nil, err
 	}
 
+	if uc.outboxRepo != nil {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "article",
+			AggregateID:   a.ID,
+			EventType:     "article.published",
+			Payload:       []byte(fmt.Sprintf(`{"article_id":"%s"}`, a.ID)),
+			SchemaVersion: 1,
+			CreatedAt:     now.Format(time.RFC3339),
+		})
+	}
+
 	return a, nil
 }
 
@@ -395,7 +425,19 @@ func (uc *ArticleUseCases) SoftDeleteArticle(ctx context.Context, id string, act
 		return content.ErrUnauthorizedWorkflow
 	}
 	now := uc.clock.Now().UTC()
-	return uc.articleRepo.SoftDelete(ctx, id, now)
+	err := uc.articleRepo.SoftDelete(ctx, id, now)
+	if err == nil && uc.outboxRepo != nil {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "article",
+			AggregateID:   id,
+			EventType:     "article.deleted",
+			Payload:       []byte(fmt.Sprintf(`{"article_id":"%s"}`, id)),
+			SchemaVersion: 1,
+			CreatedAt:     now.Format(time.RFC3339),
+		})
+	}
+	return err
 }
 
 // RestoreArticle restores a soft-deleted article.
@@ -465,6 +507,18 @@ func (uc *ArticleUseCases) ArchiveArticle(ctx context.Context, cmd ArchiveArticl
 
 	if err := uc.articleRepo.Update(ctx, a, a.Version); err != nil {
 		return nil, err
+	}
+
+	if uc.outboxRepo != nil {
+		_ = uc.outboxRepo.Save(ctx, &ports.OutboxEvent{
+			ID:            uc.idGen.NewID(),
+			AggregateType: "article",
+			AggregateID:   a.ID,
+			EventType:     "article.archived",
+			Payload:       []byte(fmt.Sprintf(`{"article_id":"%s"}`, a.ID)),
+			SchemaVersion: 1,
+			CreatedAt:     now.Format(time.RFC3339),
+		})
 	}
 
 	return a, nil

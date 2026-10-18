@@ -28,6 +28,10 @@ type RouterConfig struct {
 	SubscriptionQueries  *queries.SubscriptionQueries
 	JudgmentUseCases     *commands.JudgmentUseCases
 	JudgmentQueries      *queries.JudgmentQueryUseCases
+	SearchQueries        *queries.SearchQueries
+	SearchIndexer        *commands.SearchIndexer
+	DigestCommands       *commands.DigestCommands
+	DigestQueries        *queries.DigestQueries
 	FollowUseCases       *commands.FollowUseCases
 	FollowQueries        *queries.FollowQueries
 	LiveEngine           ports.LiveEnginePort
@@ -200,6 +204,31 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		mux.HandleFunc("POST /v1/devices", RequireAuth(followHandler.RegisterDevice))
 		mux.HandleFunc("DELETE /v1/devices", RequireAuth(followHandler.UnregisterDevice))
 		mux.HandleFunc("POST /v1/devices/register", RequireAuth(followHandler.RegisterDevice))
+	}
+
+	// 10. Search, Autosuggest & Analytics endpoints (Phase 11)
+	if cfg.SearchQueries != nil {
+		searchHandler := NewSearchHandler(cfg.SearchQueries, cfg.SearchIndexer)
+		mux.HandleFunc("GET /v1/search", searchHandler.Search)
+		mux.HandleFunc("GET /v1/search/autosuggest", searchHandler.Autosuggest)
+		mux.HandleFunc("GET /v1/cms/search/health", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(searchHandler.GetHealth))
+		mux.HandleFunc("POST /v1/cms/search/reindex", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(searchHandler.Reindex))
+		mux.HandleFunc("GET /v1/cms/search/analytics", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(searchHandler.GetAnalytics))
+	}
+
+	// 11. Digests & Round-ups endpoints (Phase 12)
+	if cfg.DigestCommands != nil && cfg.DigestQueries != nil {
+		digestHandler := NewDigestHandler(cfg.DigestCommands, cfg.DigestQueries)
+		mux.HandleFunc("GET /v1/digests", digestHandler.ListPublicDigests)
+		mux.HandleFunc("GET /v1/digests/{slug}", digestHandler.GetPublicDigest)
+
+		mux.HandleFunc("GET /v1/cms/digests", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(digestHandler.ListCMSDigests))
+		mux.HandleFunc("POST /v1/cms/digests", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(digestHandler.CreateDigest))
+		mux.HandleFunc("GET /v1/cms/digests/{id}", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(digestHandler.GetCMSDigest))
+		mux.HandleFunc("POST /v1/cms/digests/{id}/auto-assemble", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(digestHandler.AutoAssemble))
+		mux.HandleFunc("POST /v1/cms/digests/{id}/split-parts", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(digestHandler.SplitDigest))
+		mux.HandleFunc("POST /v1/cms/digests/{id}/publish", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(digestHandler.PublishDigest))
+		mux.HandleFunc("POST /v1/cms/digests/generate-monthly", RequireRoles(identity.RoleEditor, identity.RoleAdmin)(digestHandler.GenerateMonthlyDrafts))
 	}
 
 	// Global middleware chain (outer to inner execution)

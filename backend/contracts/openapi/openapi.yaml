@@ -2689,6 +2689,490 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/search:
+    get:
+      summary: Full-text and filtered search
+      description: Searches articles, judgments (including extracted PDF text with page numbers), and court cases with faceted filters and exact citation matching.
+      operationId: searchAll
+      tags:
+        - Search
+      parameters:
+        - name: q
+          in: query
+          description: Free-text search terms or exact legal citation
+          schema:
+            type: string
+        - name: type
+          in: query
+          description: Document type filter
+          schema:
+            type: string
+            enum: [all, article, judgment, court_case]
+            default: all
+        - name: section
+          in: query
+          schema:
+            type: string
+        - name: court
+          in: query
+          schema:
+            type: string
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: judge
+          in: query
+          schema:
+            type: string
+        - name: statute
+          in: query
+          schema:
+            type: string
+        - name: section_cited
+          in: query
+          schema:
+            type: string
+        - name: article_type
+          in: query
+          schema:
+            type: string
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [relevance, date_desc, date_asc]
+            default: relevance
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/search/autosuggest:
+    get:
+      summary: Typeahead autosuggest
+      description: Fast prefix autosuggest for case names, statutes, and citations.
+      operationId: searchAutosuggest
+      tags:
+        - Search
+      parameters:
+        - name: prefix
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Autosuggest results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutosuggestResult'
+
+  /v1/cms/search/health:
+    get:
+      summary: Search index health and document count
+      description: Returns indexing metrics, size, and health status for the search administration desk.
+      operationId: getSearchHealth
+      tags:
+        - CMS Search
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Search health statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchHealthResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/search/reindex:
+    post:
+      summary: Full search index rebuild
+      description: Triggers a comprehensive rebuild of all indexed articles, judgments, and cases.
+      operationId: reindexAll
+      tags:
+        - CMS Search
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Reindex status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReindexResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/search/analytics:
+    get:
+      summary: Search query analytics and zero-result queries
+      description: Returns top queries and zero-result queries to help editors monitor content gaps.
+      operationId: getSearchAnalytics
+      tags:
+        - CMS Search
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Search analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchAnalyticsResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/digests:
+    get:
+      summary: List published legal digests and round-ups
+      description: Returns published digests organized by court, year, and period.
+      operationId: listPublicDigests
+      tags:
+        - Digests
+      parameters:
+        - name: court
+          in: query
+          schema:
+            type: string
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [weekly, monthly, quarterly, annual, thematic]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [digest, round_up]
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of published digests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestListResponse'
+
+  /v1/digests/{slug}:
+    get:
+      summary: Get published digest by slug
+      description: Returns a published digest with assembled nominal, subject, and statute indexes.
+      operationId: getPublicDigest
+      tags:
+        - Digests
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Digest detail with legal indexes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestDetailResponse'
+        '404':
+          description: Digest not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/digests:
+    get:
+      summary: List all digests for editorial management
+      description: Returns all digests including drafts and archived parts.
+      operationId: listCMSDigests
+      tags:
+        - CMS Digests
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, published, archived]
+        - name: court
+          in: query
+          schema:
+            type: string
+        - name: period
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of digests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestListResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Create a new digest draft
+      description: Initializes a new digest draft with court, period, and citation range.
+      operationId: createDigest
+      tags:
+        - CMS Digests
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDigestRequest'
+      responses:
+        '201':
+          description: Digest draft created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Digest'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/digests/{id}:
+    get:
+      summary: Get digest draft with items and indexes
+      description: Returns full digest data including items, blurbs, and assembled indexes.
+      operationId: getCMSDigest
+      tags:
+        - CMS Digests
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Digest detail with items and indexes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestDetailResponse'
+        '404':
+          description: Digest not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/digests/{id}/auto-assemble:
+    post:
+      summary: Auto-assemble digest items from judgments
+      description: Automatically selects judgments matching court, period, and citation range, grouping them into nominal, subject, and statute indexes.
+      operationId: autoAssembleDigest
+      tags:
+        - CMS Digests
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auto-assembled digest with generated items and indexes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestDetailResponse'
+        '400':
+          description: Auto-assembly failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/digests/{id}/split-parts:
+    post:
+      summary: Split large digest into sequential parts
+      description: Splits a large digest into N sequential parts (e.g. Part 1 of 3) with contiguous citation ranges.
+      operationId: splitDigestParts
+      tags:
+        - CMS Digests
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SplitPartsRequest'
+      responses:
+        '200':
+          description: Digest split into parts successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitPartsResponse'
+        '400':
+          description: Split failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/digests/{id}/publish:
+    post:
+      summary: Publish digest as premium article
+      description: Creates or updates an article of type 'digest' with full assembled indexes and marks digest published.
+      operationId: publishDigest
+      tags:
+        - CMS Digests
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Digest published successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishDigestResponse'
+        '400':
+          description: Publish failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/cms/digests/generate-monthly:
+    post:
+      summary: Generate monthly digest drafts for key courts
+      description: Scheduled or on-demand trigger to auto-create monthly digest drafts for prior month.
+      operationId: generateMonthlyDigests
+      tags:
+        - CMS Digests
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Generated monthly digests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateMonthlyResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -4411,6 +4895,486 @@ components:
         judgment:
           $ref: '#/components/schemas/OfficialJudgmentRecord'
 
+    SearchResultItem:
+      type: object
+      required:
+        - id
+        - document_type
+        - title
+        - snippet
+      properties:
+        id:
+          type: string
+        document_type:
+          type: string
+          enum: [article, judgment, court_case]
+        title:
+          type: string
+        snippet:
+          type: string
+        citation:
+          type: string
+        court:
+          type: string
+        date:
+          type: string
+        article_type:
+          type: string
+        section_slug:
+          type: string
+        statutes_cited:
+          type: array
+          items:
+            type: string
+        matched_page_number:
+          type: integer
+        score:
+          type: number
+        is_premium:
+          type: boolean
+        is_upgrade_required:
+          type: boolean
 
+    SearchResult:
+      type: object
+      required:
+        - query
+        - total_hits
+        - hits
+        - is_upgrade_required
+        - processing_time_ms
+      properties:
+        query:
+          type: string
+        total_hits:
+          type: integer
+        hits:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResultItem'
+        exact_citation_match:
+          $ref: '#/components/schemas/SearchResultItem'
+        is_upgrade_required:
+          type: boolean
+        upgrade_message:
+          type: string
+        processing_time_ms:
+          type: integer
 
+    AutosuggestResult:
+      type: object
+      required:
+        - case_names
+        - statutes
+        - citations
+      properties:
+        case_names:
+          type: array
+          items:
+            type: string
+        statutes:
+          type: array
+          items:
+            type: string
+        citations:
+          type: array
+          items:
+            type: string
 
+    SearchHealthResponse:
+      type: object
+      required:
+        - total_documents
+        - article_count
+        - judgment_count
+        - case_count
+        - engine
+        - status
+      properties:
+        total_documents:
+          type: integer
+        article_count:
+          type: integer
+        judgment_count:
+          type: integer
+        case_count:
+          type: integer
+        engine:
+          type: string
+        status:
+          type: string
+        last_sync_at:
+          type: string
+          format: date-time
+
+    ReindexResponse:
+      type: object
+      required:
+        - status
+        - message
+        - stats
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        stats:
+          $ref: '#/components/schemas/SearchHealthResponse'
+
+    SearchAnalyticsResponse:
+      type: object
+      required:
+        - total_searches
+        - top_queries
+        - zero_result_queries
+      properties:
+        total_searches:
+          type: integer
+        top_queries:
+          type: array
+          items:
+            type: object
+            required:
+              - query
+              - count
+            properties:
+              query:
+                type: string
+              count:
+                type: integer
+        zero_result_queries:
+          type: array
+          items:
+            type: object
+            required:
+              - query
+              - searched_at
+              - has_filters
+            properties:
+              query:
+                type: string
+              searched_at:
+                type: string
+                format: date-time
+              has_filters:
+                type: boolean
+
+    Digest:
+      type: object
+      required:
+        - id
+        - title
+        - slug
+        - court
+        - court_code
+        - digest_type
+        - period
+        - period_start
+        - period_end
+        - status
+        - access_level
+        - is_part
+        - part_number
+        - total_parts
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        slug:
+          type: string
+        court:
+          type: string
+        court_code:
+          type: string
+        digest_type:
+          type: string
+          enum: [digest, round_up]
+        period:
+          type: string
+          enum: [weekly, monthly, quarterly, annual, thematic]
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+        citation_range_start:
+          type: integer
+        citation_range_end:
+          type: integer
+        citation_prefix:
+          type: string
+        is_part:
+          type: boolean
+        part_number:
+          type: integer
+        total_parts:
+          type: integer
+        intro:
+          type: string
+        conclusion:
+          type: string
+        article_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [draft, published, archived]
+        access_level:
+          type: string
+          enum: [free, premium]
+        created_by:
+          type: string
+          format: uuid
+        published_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DigestItem'
+
+    DigestItem:
+      type: object
+      required:
+        - id
+        - digest_id
+        - judgment_id
+        - display_order
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        digest_id:
+          type: string
+          format: uuid
+        judgment_id:
+          type: string
+          format: uuid
+        display_order:
+          type: integer
+        custom_title:
+          type: string
+        blurb:
+          type: string
+        commentary:
+          type: string
+        subject_tag:
+          type: string
+        case_title:
+          type: string
+        citation:
+          type: string
+        citation_number:
+          type: integer
+        judgment_date:
+          type: string
+        bench:
+          type: array
+          items:
+            type: string
+        statutes_cited:
+          type: array
+          items:
+            type: string
+        headnote:
+          type: string
+        held:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    NominalIndexEntry:
+      type: object
+      required:
+        - case_title
+        - citation
+        - judgment_id
+        - citation_number
+        - date
+      properties:
+        case_title:
+          type: string
+        citation:
+          type: string
+        judgment_id:
+          type: string
+        citation_number:
+          type: integer
+        date:
+          type: string
+
+    SubjectIndexGroup:
+      type: object
+      required:
+        - subject
+        - judgments
+      properties:
+        subject:
+          type: string
+        judgments:
+          type: array
+          items:
+            $ref: '#/components/schemas/NominalIndexEntry'
+
+    StatuteIndexGroup:
+      type: object
+      required:
+        - statute_name
+        - section_cited
+        - judgments
+      properties:
+        statute_name:
+          type: string
+        section_cited:
+          type: string
+        judgments:
+          type: array
+          items:
+            $ref: '#/components/schemas/NominalIndexEntry'
+
+    DigestDetailResponse:
+      type: object
+      required:
+        - digest
+        - nominal_index
+        - subject_index
+        - statute_index
+      properties:
+        digest:
+          $ref: '#/components/schemas/Digest'
+        nominal_index:
+          type: array
+          items:
+            $ref: '#/components/schemas/NominalIndexEntry'
+        subject_index:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubjectIndexGroup'
+        statute_index:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatuteIndexGroup'
+
+    DigestListResponse:
+      type: object
+      required:
+        - digests
+        - total
+        - limit
+        - offset
+      properties:
+        digests:
+          type: array
+          items:
+            $ref: '#/components/schemas/Digest'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    CreateDigestRequest:
+      type: object
+      required:
+        - title
+        - court
+        - court_code
+        - period
+        - period_start
+        - period_end
+      properties:
+        title:
+          type: string
+        court:
+          type: string
+        court_code:
+          type: string
+        digest_type:
+          type: string
+          enum: [digest, round_up]
+          default: digest
+        period:
+          type: string
+          enum: [weekly, monthly, quarterly, annual, thematic]
+          default: monthly
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+        citation_range_start:
+          type: integer
+        citation_range_end:
+          type: integer
+        citation_prefix:
+          type: string
+        intro:
+          type: string
+        conclusion:
+          type: string
+        access_level:
+          type: string
+          enum: [free, premium]
+          default: premium
+
+    SplitPartsRequest:
+      type: object
+      required:
+        - parts
+      properties:
+        parts:
+          type: integer
+          minimum: 2
+          example: 3
+
+    SplitPartsResponse:
+      type: object
+      required:
+        - parts
+        - count
+      properties:
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Digest'
+        count:
+          type: integer
+
+    PublishDigestResponse:
+      type: object
+      required:
+        - digest
+        - article
+      properties:
+        digest:
+          $ref: '#/components/schemas/Digest'
+        article:
+          $ref: '#/components/schemas/Article'
+
+    GenerateMonthlyResponse:
+      type: object
+      required:
+        - created
+        - count
+      properties:
+        created:
+          type: array
+          items:
+            $ref: '#/components/schemas/Digest'
+        count:
+          type: integer

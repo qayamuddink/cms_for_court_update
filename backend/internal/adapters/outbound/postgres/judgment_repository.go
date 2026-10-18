@@ -58,11 +58,28 @@ func (r *SQLJudgmentRepository) Create(ctx context.Context, j *judgment.Judgment
 		)
 	`
 
+	bench := j.Bench
+	if bench == nil {
+		bench = []string{}
+	}
+	advocates := j.Advocates
+	if advocates == nil {
+		advocates = []string{}
+	}
+	subjectTags := j.SubjectTags
+	if subjectTags == nil {
+		subjectTags = []string{}
+	}
+	keyTakeaways := j.KeyTakeaways
+	if keyTakeaways == nil {
+		keyTakeaways = []string{}
+	}
+
 	_, err = tx.ExecContext(ctx, query,
 		j.ID, j.Citation, j.CitationYear, j.CitationCourtCode, j.CitationNumber,
-		j.CaseTitle, j.CaseNumber, j.Court, j.CourtCode, pq.Array(j.Bench),
-		j.JudgmentDate, j.DecisionDate, j.Appellant, j.Respondent, pq.Array(j.Advocates),
-		pq.Array(j.SubjectTags), j.Issues, j.Held, j.Headnote, j.Summary, pq.Array(j.KeyTakeaways),
+		j.CaseTitle, j.CaseNumber, j.Court, j.CourtCode, pq.Array(bench),
+		j.JudgmentDate, j.DecisionDate, j.Appellant, j.Respondent, pq.Array(advocates),
+		pq.Array(subjectTags), j.Issues, j.Held, j.Headnote, j.Summary, pq.Array(keyTakeaways),
 		j.CourtCaseID, j.ArticleID, string(j.AccessLevel), string(j.Status),
 		j.PDFStorageKey, j.PDFFilename, j.PDFSizeBytes, j.PDFChecksum,
 		j.PDFPageCount, j.PDFThumbnailKey, j.PDFPreviewKey,
@@ -234,11 +251,28 @@ func (r *SQLJudgmentRepository) Update(ctx context.Context, j *judgment.Judgment
 		WHERE id = $1
 	`
 
+	bench := j.Bench
+	if bench == nil {
+		bench = []string{}
+	}
+	advocates := j.Advocates
+	if advocates == nil {
+		advocates = []string{}
+	}
+	subjectTags := j.SubjectTags
+	if subjectTags == nil {
+		subjectTags = []string{}
+	}
+	keyTakeaways := j.KeyTakeaways
+	if keyTakeaways == nil {
+		keyTakeaways = []string{}
+	}
+
 	res, err := tx.ExecContext(ctx, query,
 		j.ID, j.Citation, j.CitationYear, j.CitationCourtCode, j.CitationNumber,
-		j.CaseTitle, j.CaseNumber, j.Court, j.CourtCode, pq.Array(j.Bench),
-		j.JudgmentDate, j.DecisionDate, j.Appellant, j.Respondent, pq.Array(j.Advocates),
-		pq.Array(j.SubjectTags), j.Issues, j.Held, j.Headnote, j.Summary, pq.Array(j.KeyTakeaways),
+		j.CaseTitle, j.CaseNumber, j.Court, j.CourtCode, pq.Array(bench),
+		j.JudgmentDate, j.DecisionDate, j.Appellant, j.Respondent, pq.Array(advocates),
+		pq.Array(subjectTags), j.Issues, j.Held, j.Headnote, j.Summary, pq.Array(keyTakeaways),
 		j.CourtCaseID, j.ArticleID, string(j.AccessLevel), string(j.Status),
 		j.PDFStorageKey, j.PDFFilename, j.PDFSizeBytes, j.PDFChecksum,
 		j.PDFPageCount, j.PDFThumbnailKey, j.PDFPreviewKey,

@@ -26,6 +26,7 @@ import (
 	"github.com/livelaw/backend/internal/adapters/outbound/postgres"
 	"github.com/livelaw/backend/internal/adapters/outbound/push"
 	"github.com/livelaw/backend/internal/adapters/outbound/scanner"
+	"github.com/livelaw/backend/internal/adapters/outbound/search"
 	"github.com/livelaw/backend/internal/adapters/outbound/token"
 	"github.com/livelaw/backend/internal/application/commands"
 	"github.com/livelaw/backend/internal/application/ports"
@@ -184,13 +185,34 @@ func main() {
 	pushSender := push.NewStubPushSender(logger)
 	pushDispatcher := commands.NewPushDispatcher(caseFollowRepo, deviceTokenRepo, caseRepo, pushSender, logger)
 	eventPublisher := liveengine.NewLogEventPublisher(logger)
-	compositePublisher := commands.NewCompositeEventPublisher(eventPublisher, pushDispatcher)
 	sectionRepo := postgres.NewSQLSectionRepository(db)
 	articleRepo := postgres.NewSQLArticleRepository(db)
 	judgmentRepo := postgres.NewSQLJudgmentRepository(db)
 	entitlementChecker := entitlement.NewSQLSubscriptionChecker(db, userRepo)
 	virusScanner := scanner.NewStubScanner(getEnv("CLAMAV_ADDR", ""))
 	pdfExtractor := extractor.NewStandardPDFExtractor(nil)
+
+	// Search Engine & Analytics (Phase 11)
+	meiliURL := getEnv("MEILISEARCH_URL", "")
+	meiliMasterKey := getEnv("MEILI_MASTER_KEY", "masterKey123")
+	var searchIndex ports.SearchIndex
+	if meiliURL != "" {
+		logger.Info("configuring Meilisearch search index adapter", slog.String("url", meiliURL))
+		searchIndex = search.NewMeilisearchAdapter(search.Config{
+			BaseURL:   meiliURL,
+			MasterKey: meiliMasterKey,
+		}, logger)
+	} else {
+		logger.Info("configuring in-process memory search index")
+		searchIndex = search.NewMemorySearchIndex()
+	}
+
+	searchAnalyticsRepo := postgres.NewSQLSearchAnalyticsRepository(db)
+	searchIndexer := commands.NewSearchIndexer(searchIndex, articleRepo, judgmentRepo, caseRepo, sectionRepo, logger)
+	searchQueries := queries.NewSearchQueries(searchIndex, searchAnalyticsRepo)
+
+	// Composite Event Publisher handles stream logging, push alerts, and search index sync
+	compositePublisher := commands.NewCompositeEventPublisher(eventPublisher, pushDispatcher, searchIndexer)
 
 	// Seed initial users if enabled
 	if seedData {
@@ -214,6 +236,7 @@ func main() {
 
 	// Start PDF Extraction & OCR Worker in background (Phase 10)
 	pdfWorker := commands.NewPDFExtractionWorker(judgmentRepo, fileStore, pdfExtractor, idGenerator, clock, 5*time.Second)
+	pdfWorker.SetOutboxRepository(outboxRepo)
 	pdfWorker.Start(workerCtx)
 
 	// Wire application use cases (domain and use cases NEVER change between modes!)
@@ -223,9 +246,15 @@ func main() {
 	liveCaseQueries := queries.NewLiveCaseQueries(caseRepo, updateRepo, assignmentRepo)
 	sectionUseCases := commands.NewSectionUseCases(sectionRepo, idGenerator, clock)
 	articleUseCases := commands.NewArticleUseCases(articleRepo, idGenerator, clock, fileStore)
+	articleUseCases.SetOutboxRepository(outboxRepo)
 	articleQueries := queries.NewArticleQueries(articleRepo, sectionRepo, entitlementChecker, fileStore)
 	judgmentUseCases := commands.NewJudgmentUseCases(judgmentRepo, fileStore, virusScanner, pdfExtractor, idGenerator, clock)
+	judgmentUseCases.SetOutboxRepository(outboxRepo)
 	judgmentQueries := queries.NewJudgmentQueryUseCases(judgmentRepo, entitlementChecker, fileStore, clock)
+	digestRepo := postgres.NewSQLDigestRepository(db)
+	digestCommands := commands.NewDigestCommands(digestRepo, judgmentRepo, articleRepo, outboxRepo, idGenerator, clock)
+	digestQueries := queries.NewDigestQueries(digestRepo)
+
 	subUseCases := commands.NewSubscriptionUseCases(subRepo, userRepo, paymentGateway, idGenerator, clock)
 	subQueries := queries.NewSubscriptionQueries(subRepo)
 	followUseCases := commands.NewFollowUseCases(caseFollowRepo, deviceTokenRepo, caseRepo, idGenerator, clock)
@@ -247,6 +276,10 @@ func main() {
 		ArticleQueries:       articleQueries,
 		JudgmentUseCases:     judgmentUseCases,
 		JudgmentQueries:      judgmentQueries,
+		SearchQueries:        searchQueries,
+		SearchIndexer:        searchIndexer,
+		DigestCommands:       digestCommands,
+		DigestQueries:        digestQueries,
 		SubscriptionUseCases: subUseCases,
 		SubscriptionQueries:  subQueries,
 		FollowUseCases:       followUseCases,

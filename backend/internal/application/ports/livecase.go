@@ -34,6 +34,7 @@ type CourtCaseRepository interface {
 	Update(ctx context.Context, c *livecase.CourtCase) error
 	SetLive(ctx context.Context, id string, isLive bool, updatedAt time.Time) error
 	ListLiveCases(ctx context.Context) ([]livecase.CourtCase, error)
+	ListAll(ctx context.Context, limit int) ([]livecase.CourtCase, error)
 }
 
 // LiveUpdateRepository defines persistence operations for append-only LiveUpdate rows.
@@ -58,6 +59,7 @@ type CaseAssignmentRepository interface {
 // OutboxRepository defines persistence operations for the Transactional Outbox.
 type OutboxRepository interface {
 	SaveInTx(ctx context.Context, tx Tx, event *OutboxEvent) error
+	Save(ctx context.Context, event *OutboxEvent) error
 	GetUnpublished(ctx context.Context, limit int) ([]OutboxEvent, error)
 	MarkPublished(ctx context.Context, id string, publishedAt time.Time) error
 }

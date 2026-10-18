@@ -17,6 +17,8 @@ import {
   Scale,
   FolderTree,
   Flame,
+  Search,
+  Layers,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -70,6 +72,18 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       name: 'Judgments',
       href: '/judgments',
       icon: BookOpen,
+      show: hasRole('editor', 'admin'),
+    },
+    {
+      name: 'Digests & Round-ups',
+      href: '/digests',
+      icon: Layers,
+      show: hasRole('editor', 'admin'),
+    },
+    {
+      name: 'Search Health',
+      href: '/search-health',
+      icon: Search,
       show: hasRole('editor', 'admin'),
     },
     {

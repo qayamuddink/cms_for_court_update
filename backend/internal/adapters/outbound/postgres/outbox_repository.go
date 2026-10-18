@@ -54,6 +54,32 @@ func (r *SQLOutboxRepository) SaveInTx(ctx context.Context, tx ports.Tx, event *
 	return nil
 }
 
+// Save inserts an outbox event outside of an explicit transaction.
+func (r *SQLOutboxRepository) Save(ctx context.Context, event *ports.OutboxEvent) error {
+	query := `
+		INSERT INTO outbox_events (
+			id, aggregate_type, aggregate_id, event_type,
+			payload, schema_version, created_at
+		) VALUES (
+			$1, $2, $3, $4,
+			$5, $6, $7
+		);
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		event.ID,
+		event.AggregateType,
+		event.AggregateID,
+		event.EventType,
+		event.Payload,
+		event.SchemaVersion,
+		event.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed inserting outbox event: %w", err)
+	}
+	return nil
+}
+
 // GetUnpublished retrieves up to limit unpublished events using SKIP LOCKED for safe concurrent worker execution.
 func (r *SQLOutboxRepository) GetUnpublished(ctx context.Context, limit int) ([]ports.OutboxEvent, error) {
 	if limit <= 0 || limit > 100 {

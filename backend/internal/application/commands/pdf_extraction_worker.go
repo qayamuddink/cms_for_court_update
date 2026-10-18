@@ -22,6 +22,7 @@ type PDFExtractionWorker struct {
 	clock        ports.Clock
 	interval     time.Duration
 	stopCh       chan struct{}
+	outboxRepo   ports.OutboxRepository
 }
 
 // NewPDFExtractionWorker creates a new PDFExtractionWorker instance.
@@ -46,6 +47,11 @@ func NewPDFExtractionWorker(
 		interval:     interval,
 		stopCh:       make(chan struct{}),
 	}
+}
+
+// SetOutboxRepository attaches an outbox repository to publish search indexing events.
+func (w *PDFExtractionWorker) SetOutboxRepository(repo ports.OutboxRepository) {
+	w.outboxRepo = repo
 }
 
 // Start launches the background extraction worker loop.
@@ -154,6 +160,18 @@ func (w *PDFExtractionWorker) ProcessPendingExtractions(ctx context.Context) (in
 		if err := w.judgmentRepo.UpdateExtractionStatus(ctx, j.ID, finalStatus, now); err != nil {
 			log.Printf("[PDFExtractionWorker] Failed to update extraction status for judgment %s: %v", j.ID, err)
 			continue
+		}
+
+		if w.outboxRepo != nil {
+			_ = w.outboxRepo.Save(ctx, &ports.OutboxEvent{
+				ID:            w.idGen.NewID(),
+				AggregateType: "judgment",
+				AggregateID:   j.ID,
+				EventType:     "judgment.pages_extracted",
+				Payload:       []byte(fmt.Sprintf(`{"judgment_id":"%s"}`, j.ID)),
+				SchemaVersion: 1,
+				CreatedAt:     now.Format(time.RFC3339),
+			})
 		}
 
 		processed++
